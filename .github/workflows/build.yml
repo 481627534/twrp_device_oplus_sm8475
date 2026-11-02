@@ -79,7 +79,11 @@ jobs:
       with:
         root-reserve-mb: 4096
         temp-reserve-mb: 2048
-        swap-size-mb: 8192
+        # ⚠️ swap 会占 root 磁盘 1:1。AOSP 源码 25G + out 20G + swap 8G + ccache 3G = 56G，
+        #    超过删预装后的 ~50G 可用 ⇒ 磁盘写满 ⇒ runner agent 连日志都写不进去
+        #    （表现就是 logs_url=None、日志 zip 只有 22 字节）。
+        #    改为 0，内存不够靠下面的 zram 兜（zram 不占磁盘）。
+        swap-size-mb: 0
         remove-dotnet: 'true'
         remove-android: 'true'
         remove-haskell: 'true'
@@ -87,18 +91,23 @@ jobs:
 
     - name: Verify resources
       run: |
-        echo "=== 磁盘 ==="
-        df -h / /mnt 2>/dev/null || df -h /
+        echo "=== 全部挂载点（确认 /mnt 是 tmpfs 还是磁盘）==="
+        df -hT
         echo "=== 内存 / swap ==="
         free -h
         swapon --show || echo "（无 swap）"
         echo "=== CPU ==="
         nproc
+        echo "=== 关键目录 ==="
+        echo "GITHUB_WORKSPACE=$GITHUB_WORKSPACE"
+        du -sh "$GITHUB_WORKSPACE" 2>/dev/null || true
 
     - name: Setup ccache
       uses: hendrikmuhs/ccache-action@v1.2
       with:
         create-symlink: true
+        # 首轮没有缓存可用，开太大纯占磁盘；1G 足够命中高频头文件/小目标
+        max-size: 1G
 
     - name: Setup zram
       run: |
@@ -110,11 +119,13 @@ jobs:
         sudo apt-get update -qq || true
         sudo apt-get install -y zram-tools || true
         if [ -f /etc/default/zramswap ]; then
-          sudo sed -i 's/^#PERCENT=50/PERCENT=90/' /etc/default/zramswap || true
-          sudo sed -i 's/^#PRIORITY=100/PRIORITY=1000/' /etc/default/zramswap || true
+          # 50% 而不是 90%：zram 的数据本身驻留在 RAM 里，开太大反而加剧内存压力
+          sudo sed -i 's/^#\?PERCENT=.*/PERCENT=50/' /etc/default/zramswap || true
+          sudo sed -i 's/^#\?PRIORITY=.*/PRIORITY=1000/' /etc/default/zramswap || true
           sudo systemctl restart zramswap || true
         fi
         zramctl || true
+        free -h
         echo "zram 步骤已容错通过"
 
     - name: Setup environment
@@ -154,6 +165,14 @@ jobs:
           exit 1
         fi
 
+        # 删 .repo 省 8~12 GB（git 对象 + 项目元数据，编译完全用不到）。
+        # 这是本次磁盘爆掉的主要解法之一：源码 25G + out 20G 已接近 50G 上限。
+        echo "=== .repo 大小 ==="
+        du -sh .repo 2>/dev/null || true
+        rm -rf .repo
+        echo "=== 删 .repo 后 ==="
+        df -h / | tail -1
+
     - name: Setup device
       run: |
         git clone ${{ github.event.inputs.DEVICE_TREE_URL }} -b ${{ github.event.inputs.DEVICE_TREE_BRANCH }} device/${{ github.event.inputs.DEVICE_PATH }}
@@ -175,13 +194,13 @@ jobs:
     - name: Build TWRP
       timeout-minutes: 300  # 5小时（GitHub 硬上限 6h）
       run: |
-        set -x
+        set -o pipefail
         ulimit -c 0   # 不生成 core dump，省磁盘
         source build/envsetup.sh
         export ALLOW_MISSING_DEPENDENCIES=true
         export CCACHE_DIR=.ccache
         export CCACHE_EXEC=$(command -v ccache)
-        export CCACHE_MAXSIZE=3G
+        export CCACHE_MAXSIZE=1G
         export USE_CCACHE=1
         export LC_ALL=C
 
@@ -203,16 +222,26 @@ jobs:
         [ $JOBS -lt 2 ] && JOBS=2
         echo "使用 $JOBS 个并行任务"
 
-        # 心跳同时报磁盘/内存，用来判断到底是谁先耗尽
+        # 看门狗：磁盘可用 < 2GB 就主动杀编译，宁可这轮失败也不要让 runner 被写满
+        # （写满后 GitHub 连日志都收不到，logs_url=None，等于白烧一轮还查不出原因）
         (
-          while sleep 120; do
-            echo "[$(date +%H:%M:%S)] 心跳 | / 可用 $(df -h / | tail -1 | awk '{print $4}') | 内存可用 $(free -m | awk '/^Mem:/{print $7}')MB | swap 已用 $(free -m | awk '/^Swap:/{print $3}')MB"
+          while sleep 60; do
+            AVAIL=$(df -m / | tail -1 | awk '{print $4}')
+            MEM=$(free -m | awk '/^Mem:/{print $7}')
+            SWP=$(free -m | awk '/^Swap:/{print $3}')
+            echo "[$(date +%H:%M:%S)] 心跳 | / 可用 ${AVAIL}MB | 内存可用 ${MEM}MB | swap 已用 ${SWP}MB"
+            if [ "$AVAIL" -lt 2048 ]; then
+              echo "::error::磁盘可用仅 ${AVAIL}MB (<2GB)，主动中止编译，保留日志"
+              pkill -9 -f ninja 2>/dev/null || true
+              pkill -9 -f soong_ui 2>/dev/null || true
+              break
+            fi
           done
         ) &
         HEARTBEAT_PID=$!
 
-        m -j$JOBS ${{ github.event.inputs.BUILD_PARTITION }}image
-        RC=$?
+        m -j$JOBS ${{ github.event.inputs.BUILD_PARTITION }}image 2>&1 | tee build.log
+        RC=${PIPESTATUS[0]}
 
         kill $HEARTBEAT_PID 2>/dev/null || true
         echo "=== m 退出码: $RC ==="
@@ -222,10 +251,21 @@ jobs:
 
         if [ "$RC" -ne 0 ]; then
           echo "::error::m 编译失败，退出码 $RC"
+          echo "--- build.log 末尾 80 行 ---"
+          tail -80 build.log || true
           exit $RC
         fi
 
         mv out/target/product/${{ github.event.inputs.DEVICE_NAME }}/${{ github.event.inputs.BUILD_PARTITION }}.img out/target/product/${{ github.event.inputs.DEVICE_NAME }}/TWRP-3.7.1-16-${{ github.event.inputs.DEVICE_NAME }}-${{ env.BUILD_DATE }}.img
+
+    - name: Upload build log
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: build-log
+        path: build.log
+        if-no-files-found: ignore
+        retention-days: 3
 
     - name: Size gate (PGW110)
       run: |
