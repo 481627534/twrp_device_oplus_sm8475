@@ -173,6 +173,17 @@ jobs:
         echo "=== 删 .repo 后 ==="
         df -h / | tail -1
 
+        # 前置闸门：编译 out 需要约 20G，留不够就现在退出，别浪费 2 小时
+        AVAIL=$(df -m / | tail -1 | awk '{print $4}')
+        echo "可用空间 ${AVAIL}MB"
+        if [ "$AVAIL" -lt 25000 ]; then
+          echo "::error::删 .repo 后仅剩 ${AVAIL}MB (<25G)，编译 out 需要约 20G，提前退出"
+          echo "--- 当前磁盘明细 ---"
+          df -hT
+          du -sh * 2>/dev/null | sort -h | tail -15 || true
+          exit 1
+        fi
+
     - name: Setup device
       run: |
         git clone ${{ github.event.inputs.DEVICE_TREE_URL }} -b ${{ github.event.inputs.DEVICE_TREE_BRANCH }} device/${{ github.event.inputs.DEVICE_PATH }}
