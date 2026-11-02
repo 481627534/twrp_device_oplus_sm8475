@@ -73,16 +73,17 @@ jobs:
     - name: Maximize build space
       # 原配置没传任何参数，实测这一步耗时 0 秒 = 基本没扩容。
       # 这里显式扩容 + 建 swap（AOSP 编译 -j2 在 16GB runner 上很容易 OOM）。
+      # ⚠️ 不要加 remove-docker-images: runner 上没有 docker 命令，
+      #    会报 "sudo: docker: command not found" 直接 exit 1 搞挂整个 job。
       uses: easimon/maximize-build-space@master
       with:
-        root-reserve-mb: 8192
+        root-reserve-mb: 4096
         temp-reserve-mb: 2048
         swap-size-mb: 8192
         remove-dotnet: 'true'
         remove-android: 'true'
         remove-haskell: 'true'
         remove-codeql: 'true'
-        remove-docker-images: 'true'
 
     - name: Verify resources
       run: |
