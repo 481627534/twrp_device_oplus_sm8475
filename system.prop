@@ -19,6 +19,10 @@ external_storage.sdcardfs.enabled=0
 # Crypto
 ro.hardware.keystore_desede=true
 ro.crypto.metadata_init_delete_all_keys.enabled=true
+# PGW110: 本机原厂 fstab 是 aes-256-xts(内容) : aes-256-cts(文件名)。
+# 原厂 recovery 没这个键（因为它不解密）；TWRP 不显式声明会按默认走，
+# 结果就是「数据解出来了但文件名全乱码」，极容易误判成解密失败。
+ro.crypto.volume.filenames_mode=aes-256-cts
 ro.product.cuptsm=ONEPLUS|ESE|01|02
 vendor.wv.oemcrypto.debug.enable_prov40=true
 
