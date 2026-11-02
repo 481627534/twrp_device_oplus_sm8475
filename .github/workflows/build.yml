@@ -212,35 +212,38 @@ jobs:
 
         # 日志外送脚本：runner 被强杀时 GitHub 的日志 blob 根本不会生成
         # （/actions/jobs/{id}/logs 返回 BlobNotFound），只能靠编译期间主动外送。
-        # 每 4 分钟把 build.log 尾部贴成一条 commit comment，死了也有现场。
-        cat > /tmp/postlog.py <<'PYEOF'
-        import json, os, time, urllib.request
-        tok = os.environ.get('GH_TOKEN', '')
-        repo = os.environ.get('GITHUB_REPOSITORY', '')
-        sha = os.environ.get('GITHUB_SHA', '')
-        if not (tok and repo and sha):
-            raise SystemExit
-        try:
-            d = open('build.log', 'rb').read()[-5000:].decode('utf-8', 'replace')
-        except Exception:
-            raise SystemExit
-        body = '### build.log @ ' + time.strftime('%H:%M:%S') + '\n```\n' + d + '\n```'
-        req = urllib.request.Request(
-            f'https://api.github.com/repos/{repo}/commits/{sha}/comments',
-            data=json.dumps({'body': body}).encode(),
-            headers={'Authorization': 'Bearer ' + tok,
-                     'Accept': 'application/vnd.github+json',
-                     'Content-Type': 'application/json'},
-            method='POST')
-        try:
-            urllib.request.urlopen(req, timeout=20)
-        except Exception:
-            pass
-        PYEOF
+        # ⚠️ 不用 python 做 JSON 转义（上一版就是这里静默失败，comment 数 = 0），
+        #    改用 jq（runner 自带），并把 HTTP 码打出来。
+        if ! command -v jq >/dev/null 2>&1; then
+          sudo apt-get install -y jq >/dev/null 2>&1 || true
+        fi
+        post_log() {
+          local txt body
+          txt=$(tail -c 4000 build.log 2>/dev/null || true)
+          [ -n "$txt" ] || txt="(build.log 暂无内容)"
+          body=$(printf '### build.log @ %s\n```\n%s\n```' "$(date +%H:%M:%S)" "$txt")
+          if command -v jq >/dev/null 2>&1; then
+            jq -n --arg b "$body" '{body:$b}' > /tmp/body.json
+          else
+            printf '%s' "$body" > /tmp/body.txt
+            python3 -c "import json;print(json.dumps({'body':open('/tmp/body.txt',encoding='utf-8',errors='replace').read()}))" > /tmp/body.json || return 0
+          fi
+          local code
+          code=$(curl -sS -o /tmp/resp.json -w '%{http_code}' -X POST \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "Content-Type: application/json" \
+            --data-binary @/tmp/body.json \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/comments" 2>/dev/null || echo "000")
+          echo "[$(date +%H:%M:%S)] 日志外送 HTTP=${code} token_len=${#GH_TOKEN}"
+          [ "$code" = "201" ] || head -c 300 /tmp/resp.json 2>/dev/null || true
+          echo
+        }
 
         echo "=== 编译前资源 ==="
         df -h / | tail -1
         free -h
+        echo "token_len=${#GH_TOKEN} repo=${GITHUB_REPOSITORY} sha=${GITHUB_SHA}"
 
         # lunch 容错：AQ1601 的 README 写简写，TWRP-Test README 写 -bp2a-eng
         LT="${LUNCH_TARGET}"
@@ -256,16 +259,17 @@ jobs:
         [ $JOBS -lt 2 ] && JOBS=2
         echo "使用 $JOBS 个并行任务"
 
-        # 看门狗：磁盘可用 < 2GB 就主动杀编译；同时每 60s 打一行"最后编译到哪个文件"
-        # （runner 被强杀时 GitHub 收不到日志，最后一条心跳就是唯一的现场证据）
+        # 看门狗：磁盘可用 < 2GB 就主动杀编译；心跳同时写进 build.log
+        # （ninja 在非 tty 下长时间不输出，build.log 可能是空的，那样外送脚本会一条都发不出去）
         (
           while sleep 60; do
             AVAIL=$(df -m / | tail -1 | awk '{print $4}')
             MEM=$(free -m | awk '/^Mem:/{print $7}')
             SWP=$(free -m | awk '/^Swap:/{print $3}')
             LAST=$(tail -1 build.log 2>/dev/null | cut -c1-150)
-            echo "[$(date +%H:%M:%S)] 心跳 | 磁盘可用 ${AVAIL}MB | 内存可用 ${MEM}MB | swap已用 ${SWP}MB"
-            echo "           最后: ${LAST}"
+            LINE="[$(date +%H:%M:%S)] 心跳 | 磁盘 ${AVAIL}MB | 内存 ${MEM}MB | swap ${SWP}MB | 最后: ${LAST}"
+            echo "$LINE"
+            echo "$LINE" >> build.log 2>/dev/null || true
             if [ "$AVAIL" -lt 2048 ]; then
               echo "::error::磁盘可用仅 ${AVAIL}MB (<2GB)，主动中止编译，保留日志"
               pkill -9 -f ninja 2>/dev/null || true
@@ -276,18 +280,22 @@ jobs:
         ) &
         HEARTBEAT_PID=$!
 
-        # 日志外送（每 4 分钟一条 commit comment）
+        # 日志外送（每 3 分钟一条 commit comment）
         (
-          while sleep 240; do
-            [ -s build.log ] && python3 /tmp/postlog.py || true
+          while sleep 180; do
+            post_log
           done
         ) &
         LOG_PID=$!
+
+        # 先发一条，确认通道可用（不等 3 分钟）
+        post_log
 
         m -j$JOBS ${{ github.event.inputs.BUILD_PARTITION }}image 2>&1 | tee build.log
         RC=${PIPESTATUS[0]}
 
         kill $HEARTBEAT_PID $LOG_PID 2>/dev/null || true
+        post_log
         echo "=== m 退出码: $RC ==="
         echo "=== 编译后资源 ==="
         df -h / | tail -1
