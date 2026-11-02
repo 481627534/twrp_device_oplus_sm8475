@@ -80,18 +80,33 @@ jobs:
 
     - name: Setup zram
       run: |
-        sudo apt install linux-modules-extra-$(uname -r) zram-tools -y
-        sudo modprobe zram
-        sudo sed -i 's/^#PERCENT=50/PERCENT=90/' /etc/default/zramswap
-        sudo sed -i 's/^#PRIORITY=100/PRIORITY=1000/' /etc/default/zramswap
-        sudo systemctl restart zramswap
-        zramctl
+        # 注意：不要装 linux-modules-extra-$(uname -r)
+        # runner 内核是 7.0.0-xxxx-azure，源里没有对应的 linux-modules-extra，
+        # apt 会 exit 100 直接搞挂整个 job。zram 模块 runner 内核本来就有。
+        # 这一步全部容错：失败也不影响构建。
+        sudo modprobe zram || true
+        sudo apt-get update -qq || true
+        sudo apt-get install -y zram-tools || true
+        if [ -f /etc/default/zramswap ]; then
+          sudo sed -i 's/^#PERCENT=50/PERCENT=90/' /etc/default/zramswap || true
+          sudo sed -i 's/^#PRIORITY=100/PRIORITY=1000/' /etc/default/zramswap || true
+          sudo systemctl restart zramswap || true
+        fi
+        zramctl || true
+        echo "zram 步骤已容错通过"
 
     - name: Setup environment
       run: |
         export DEBIAN_FRONTEND=noninteractive
-        sudo apt update && sudo apt upgrade -y
-        sudo apt install repo -y
+        # 不跑 apt upgrade：runner 上它会升级内核/驱动，耗时 2-3 分钟且可能引入新问题
+        sudo apt-get update -qq || true
+        sudo apt-get install -y repo || {
+          echo "apt 装 repo 失败，改用官方脚本"
+          mkdir -p ~/bin
+          curl -fsSL --insecure https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
+          chmod a+x ~/bin/repo
+          sudo ln -sf ~/bin/repo /usr/bin/repo
+        }
         # ubuntu-latest 只有 python3，AOSP 某些脚本要 python
         sudo ln -sf /usr/bin/python3 /usr/bin/python || true
         git config --global user.name ${{ github.actor }}
@@ -99,6 +114,8 @@ jobs:
         echo "--- toolchain ---"
         python --version || true
         java -version || true
+        repo --version 2>&1 | head -3 || true
+        nproc; free -h | head -2; df -h / | tail -1
 
     - name: Sync source
       run: |
