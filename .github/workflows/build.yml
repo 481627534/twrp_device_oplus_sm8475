@@ -71,7 +71,28 @@ jobs:
       uses: rokibhasansagar/slimhub_actions@main
 
     - name: Maximize build space
+      # 原配置没传任何参数，实测这一步耗时 0 秒 = 基本没扩容。
+      # 这里显式扩容 + 建 swap（AOSP 编译 -j2 在 16GB runner 上很容易 OOM）。
       uses: easimon/maximize-build-space@master
+      with:
+        root-reserve-mb: 8192
+        temp-reserve-mb: 2048
+        swap-size-mb: 8192
+        remove-dotnet: 'true'
+        remove-android: 'true'
+        remove-haskell: 'true'
+        remove-codeql: 'true'
+        remove-docker-images: 'true'
+
+    - name: Verify resources
+      run: |
+        echo "=== 磁盘 ==="
+        df -h / /mnt 2>/dev/null || df -h /
+        echo "=== 内存 / swap ==="
+        free -h
+        swapon --show || echo "（无 swap）"
+        echo "=== CPU ==="
+        nproc
 
     - name: Setup ccache
       uses: hendrikmuhs/ccache-action@v1.2
@@ -120,10 +141,17 @@ jobs:
     - name: Sync source
       run: |
         repo init -u ${{ github.event.inputs.TWRP_MANIFEST_URL }} -b ${{ github.event.inputs.TWRP_MANIFEST_BRANCH }} --depth=1
-        (while true; do echo "Syncing source..."; sleep 60; done) &
+        (while true; do echo "Syncing source... $(date +%H:%M:%S) | / 可用 $(df -h / | tail -1 | awk '{print $4}')"; sleep 60; done) &
         TIP_PID=$!
-        repo sync
-        kill $TIP_PID && exit 0
+        # 注意：原写法 `kill $TIP_PID && exit 0` 会把 repo sync 的失败吞掉（失败也 exit 0）
+        if repo sync; then
+          kill $TIP_PID 2>/dev/null || true
+          echo "repo sync 完成，/ 剩余 $(df -h / | tail -1 | awk '{print $4}')"
+        else
+          kill $TIP_PID 2>/dev/null || true
+          echo "::error::repo sync 失败"
+          exit 1
+        fi
 
     - name: Setup device
       run: |
@@ -144,34 +172,58 @@ jobs:
       working-directory: device/${{ github.event.inputs.DEVICE_PATH }}
 
     - name: Build TWRP
-      timeout-minutes: 240  # 4小时超时
+      timeout-minutes: 300  # 5小时（GitHub 硬上限 6h）
       run: |
+        set -x
+        ulimit -c 0   # 不生成 core dump，省磁盘
         source build/envsetup.sh
         export ALLOW_MISSING_DEPENDENCIES=true
         export CCACHE_DIR=.ccache
-        export CCACHE_EXEC=$(command -v ccache)        
-        export CCACHE_MAXSIZE=5G
+        export CCACHE_EXEC=$(command -v ccache)
+        export CCACHE_MAXSIZE=3G
         export USE_CCACHE=1
-        lunch twrp_${{ env.LUNCH_TARGET }}
-        
-        # 使用更少的并行任务减少内存压力
+        export LC_ALL=C
+
+        echo "=== 编译前资源 ==="
+        df -h / | tail -1
+        free -h
+
+        # lunch 容错：AQ1601 的 README 写简写，TWRP-Test README 写 -bp2a-eng
+        LT="${LUNCH_TARGET}"
+        lunch twrp_${LT} || lunch twrp_${LT}-bp2a-eng || {
+          echo "::error::lunch twrp_${LT} 与 twrp_${LT}-bp2a-eng 都失败"
+          source build/envsetup.sh 2>/dev/null || true
+          echo "--- 可用 lunch 组合 ---"
+          print_lunch_menu 2>/dev/null | head -40 || true
+          exit 1
+        }
+
         JOBS=$(( $(nproc) / 2 ))
         [ $JOBS -lt 2 ] && JOBS=2
-        
-        echo "使用 $JOBS 个并行任务进行编译"
-        
-        # 编译并保持活动
-        ( 
-            while sleep 120; do 
-                echo "[$(date +%H:%M:%S)] GitHub Actions心跳 - 编译进行中"
-            done 
+        echo "使用 $JOBS 个并行任务"
+
+        # 心跳同时报磁盘/内存，用来判断到底是谁先耗尽
+        (
+          while sleep 120; do
+            echo "[$(date +%H:%M:%S)] 心跳 | / 可用 $(df -h / | tail -1 | awk '{print $4}') | 内存可用 $(free -m | awk '/^Mem:/{print $7}')MB | swap 已用 $(free -m | awk '/^Swap:/{print $3}')MB"
+          done
         ) &
         HEARTBEAT_PID=$!
-        
-        # 执行编译
+
         m -j$JOBS ${{ github.event.inputs.BUILD_PARTITION }}image
-        
-        kill $HEARTBEAT_PID
+        RC=$?
+
+        kill $HEARTBEAT_PID 2>/dev/null || true
+        echo "=== m 退出码: $RC ==="
+        echo "=== 编译后资源 ==="
+        df -h / | tail -1
+        free -h
+
+        if [ "$RC" -ne 0 ]; then
+          echo "::error::m 编译失败，退出码 $RC"
+          exit $RC
+        fi
+
         mv out/target/product/${{ github.event.inputs.DEVICE_NAME }}/${{ github.event.inputs.BUILD_PARTITION }}.img out/target/product/${{ github.event.inputs.DEVICE_NAME }}/TWRP-3.7.1-16-${{ github.event.inputs.DEVICE_NAME }}-${{ env.BUILD_DATE }}.img
 
     - name: Size gate (PGW110)
