@@ -79,11 +79,11 @@ jobs:
       with:
         root-reserve-mb: 4096
         temp-reserve-mb: 2048
-        # ⚠️ swap 会占 root 磁盘 1:1。AOSP 源码 25G + out 20G + swap 8G + ccache 3G = 56G，
-        #    超过删预装后的 ~50G 可用 ⇒ 磁盘写满 ⇒ runner agent 连日志都写不进去
-        #    （表现就是 logs_url=None、日志 zip 只有 22 字节）。
-        #    改为 0，内存不够靠下面的 zram 兜（zram 不占磁盘）。
-        swap-size-mb: 0
+        # ⚠️ 不能设 0：action 内部无条件执行 `lvcreate --size ${SWAP}M`，
+        #    0 会报 "--size may not be zero" 直接 exit 3 搞挂整个 job（run 41433532376 实测）。
+        #    实测 slimhub 之后 root 可用 139,185 MB（136 GB），磁盘不是瓶颈，
+        #    所以 swap 可以放心给——它的作用是抗 OOM，不是省空间。
+        swap-size-mb: 4096
         remove-dotnet: 'true'
         remove-android: 'true'
         remove-haskell: 'true'
@@ -165,22 +165,15 @@ jobs:
           exit 1
         fi
 
-        # 删 .repo 省 8~12 GB（git 对象 + 项目元数据，编译完全用不到）。
-        # 这是本次磁盘爆掉的主要解法之一：源码 25G + out 20G 已接近 50G 上限。
-        echo "=== .repo 大小 ==="
-        du -sh .repo 2>/dev/null || true
-        rm -rf .repo
-        echo "=== 删 .repo 后 ==="
-        df -h / | tail -1
-
-        # 前置闸门：编译 out 需要约 20G，留不够就现在退出，别浪费 2 小时
-        AVAIL=$(df -m / | tail -1 | awk '{print $4}')
-        echo "可用空间 ${AVAIL}MB"
+        # 实测磁盘充足（slimhub 后 136 GB 可用），不删 .repo——删它要花 1~2 分钟还多一个失败点。
+        # 只做一次空间体检，作为保险。
+        echo "=== 同步后磁盘 ==="
+        df -hT | head -8
+        AVAIL=$(df -m "$GITHUB_WORKSPACE" | tail -1 | awk '{print $4}')
+        echo "workspace 可用 ${AVAIL}MB"
         if [ "$AVAIL" -lt 25000 ]; then
-          echo "::error::删 .repo 后仅剩 ${AVAIL}MB (<25G)，编译 out 需要约 20G，提前退出"
-          echo "--- 当前磁盘明细 ---"
-          df -hT
-          du -sh * 2>/dev/null | sort -h | tail -15 || true
+          echo "::error::workspace 可用仅 ${AVAIL}MB (<25G)，编译 out 需要约 20G，提前退出"
+          du -sh "$GITHUB_WORKSPACE"/* 2>/dev/null | sort -h | tail -15 || true
           exit 1
         fi
 
