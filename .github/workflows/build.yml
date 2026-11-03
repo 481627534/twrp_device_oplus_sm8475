@@ -83,7 +83,10 @@ jobs:
       run: |
         sudo swapoff -a || true
         sudo rm -f /swapfile
-        sudo fallocate -l 8G /swapfile || sudo dd if=/dev/zero of=/swapfile bs=1M count=8192
+        # 24G 不是拍脑袋：run #8 实测 soong_build 单进程 RSS 14.7 GB，
+        # 15 GB 物理 + 8 GB swap 一起被打满，soong bootstrap 被 kill。
+        # soong 分析阶段是单进程单线程，-j 对它无效，只能靠换页空间兜。
+        sudo fallocate -l 24G /swapfile || sudo dd if=/dev/zero of=/swapfile bs=1M count=24576
         sudo chmod 600 /swapfile
         sudo mkswap /swapfile
         sudo swapon /swapfile
@@ -119,7 +122,10 @@ jobs:
         # zram 不再开启：压缩数据驻留 RAM，15G 机器上只会加剧抖动（run #4 起已确认）。
         # AOSP 编译要大量 mmap，默认 vm.max_map_count=65530 偏小
         sudo sysctl -w vm.max_map_count=262144 || true
-        sudo sysctl -w vm.swappiness=10 || true
+        # ⚠️ 这里 swappiness 要**调高**不是调低。soong_build 单进程要 14.7 GB，
+        #    物理只有 15 GB，内核必须愿意把冷页面换出去给 soong 腾地方。
+        #    swappiness=10 会让内核死守匿名页 → 直接 OOM kill，正是 run #8 的死法。
+        sudo sysctl -w vm.swappiness=60 || true
         echo "max_map_count=$(cat /proc/sys/vm/max_map_count)"
         echo "=== 最终内存/swap 状态 ==="
         free -h
@@ -274,7 +280,9 @@ jobs:
               pkill -9 -f soong_ui 2>/dev/null || true
               break
             fi
-            if [ "$MEM" -lt 800 ]; then
+            # 阈值 400MB 而不是 800MB：soong_build 本来就会把物理内存吃到很低、
+            # 靠 swap 撑住，800MB 会误杀一个正常工作的 soong 分析阶段。
+            if [ "$MEM" -lt 400 ]; then
               echo "::error::内存可用仅 ${MEM}MB (<800MB)，主动中止编译，保留日志"
               echo "--- dmesg 最后 30 行（找 OOM killer）---"
               dmesg | tail -30 || true
