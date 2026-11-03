@@ -337,14 +337,26 @@ jobs:
 
     - name: Size gate (PGW110)
       run: |
-        IMG="out/target/product/${{ github.event.inputs.DEVICE_NAME }}/${{ github.event.inputs.BUILD_PARTITION }}.img"
+        # ⚠️ 不能硬编码 recovery.img：Build TWRP 末尾已经把它 mv 成
+        #    TWRP-3.7.1-16-<dev>-<date>.img。run #9 就栽在这——编译 01:29:11 成功、
+        #    m 退出码 0，结果这一步 stat 原名失败 exit 1，整轮白判失败。
+        #    用 glob 兜住两种名字。
+        DIR="out/target/product/${{ github.event.inputs.DEVICE_NAME }}"
+        IMG=$(ls -1 "$DIR"/TWRP-*.img "$DIR"/recovery.img 2>/dev/null | head -1)
+        if [ -z "$IMG" ] || [ ! -f "$IMG" ]; then
+          echo "::error::找不到产物 img"
+          ls -lh "$DIR" | head -30 || true
+          exit 1
+        fi
         SZ=$(stat -c%s "$IMG")
-        echo "recovery.img = $SZ B   (分区上限 104857600 B)"
+        echo "产物 = $IMG"
+        echo "大小 = $SZ B   (分区上限 104857600 B)"
         if [ "$SZ" -gt 104857600 ]; then
           echo "::error::超出 recovery_a/recovery_b 分区 100 MiB，刷不进去"
           exit 1
         fi
         echo "余量 = $(( 104857600 - SZ )) B"
+        echo "sha256 = $(sha256sum "$IMG" | cut -d' ' -f1)"
 
     - name: Upload to Release
       uses: softprops/action-gh-release@v2
