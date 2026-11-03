@@ -70,24 +70,29 @@ jobs:
     - name: Cleanup
       uses: rokibhasansagar/slimhub_actions@main
 
-    - name: Maximize build space
-      # 原配置没传任何参数，实测这一步耗时 0 秒 = 基本没扩容。
-      # 这里显式扩容 + 建 swap（AOSP 编译 -j2 在 16GB runner 上很容易 OOM）。
-      # ⚠️ 不要加 remove-docker-images: runner 上没有 docker 命令，
-      #    会报 "sudo: docker: command not found" 直接 exit 1 搞挂整个 job。
-      uses: easimon/maximize-build-space@master
-      with:
-        root-reserve-mb: 4096
-        temp-reserve-mb: 2048
-        # ⚠️ 不能设 0：action 内部无条件执行 `lvcreate --size ${SWAP}M`，
-        #    0 会报 "--size may not be zero" 直接 exit 3 搞挂整个 job（run 41433532376 实测）。
-        #    实测 slimhub 之后 root 可用 139,185 MB（136 GB），磁盘不是瓶颈。
-        #    8192 = 给编译峰值留足缓冲；关掉 zram 后这 8G 是唯一的 swap。
-        swap-size-mb: 8192
-        remove-dotnet: 'true'
-        remove-android: 'true'
-        remove-haskell: 'true'
-        remove-codeql: 'true'
+    - name: Setup swap
+      # 🔴 已删除 easimon/maximize-build-space（2026-11-03 定案）。它在本机纯负收益：
+      #    ① 先 `swapoff -a` + 删掉 runner 自带的健康 swapfile；
+      #    ② 用 lvcreate 建 swap LV，底层是 loop 设备 → /pv.img 稀疏文件 → root 的 ext4
+      #       （run #5 日志里 `Physical volume "/dev/loop0" successfully created` 已证实）。
+      #    Linux 的 swap-on-loopfile 是已知的递归回收死锁场景：内存紧张时内核要回收页面，
+      #    回收又必须给 loop 文件分配新块，而分配块本身又要内存 ⇒ 卡在 D 态、VM 直接消失。
+      #    证据：run #4 52m、#6 50m、#7 46m 三次死在同一阶段，日志一个字都没留下。
+      # 实测 slimhub 之后 root 可用 136 GB ⇒ 磁盘从来不是瓶颈，根本不需要"扩容"。
+      # 结论：swap 只用 root ext4 上的普通 swapfile。
+      run: |
+        sudo swapoff -a || true
+        sudo rm -f /swapfile
+        sudo fallocate -l 8G /swapfile || sudo dd if=/dev/zero of=/swapfile bs=1M count=8192
+        sudo chmod 600 /swapfile
+        sudo mkswap /swapfile
+        sudo swapon /swapfile
+        echo "=== swap（必须是 /swapfile，不能出现 /dev/mapper 或 loop）==="
+        swapon --show
+        free -h
+        df -h /
+        echo "=== 确认 swapfile 的底层不是 loop ==="
+        findmnt -no SOURCE,FSTYPE / || true
 
     - name: Verify resources
       run: |
@@ -109,24 +114,16 @@ jobs:
         # 首轮没有缓存可用，开太大纯占磁盘；1G 足够命中高频头文件/小目标
         max-size: 1G
 
-    - name: Tune memory
+    - name: Tune kernel
       run: |
-        # ⚠️ 不要装 linux-modules-extra-$(uname -r)：runner 内核是 7.0.0-xxxx-azure，
-        #    源里没有对应包，apt exit 100 会直接搞挂 job。zram 模块内核本来就有。
-        # ⚠️ 也不要开 zram：zram 的压缩数据驻留 RAM，16 GB 机器上编译时
-        #    系统2G + 编译10G + zram最多8G > 16G，反而把 OOM 提前触发。
-        #    只用磁盘 swapfile（由 Maximize build space 创建）。
-        sudo swapoff /dev/zram0 2>/dev/null || true
-        sudo zramctl --reset /dev/zram0 2>/dev/null || true
-        sudo modprobe -r zram 2>/dev/null || true
+        # zram 不再开启：压缩数据驻留 RAM，15G 机器上只会加剧抖动（run #4 起已确认）。
         # AOSP 编译要大量 mmap，默认 vm.max_map_count=65530 偏小
         sudo sysctl -w vm.max_map_count=262144 || true
         sudo sysctl -w vm.swappiness=10 || true
-        echo "=== swap（应该只剩磁盘 swapfile，没有 zram）==="
-        swapon --show || echo "（无 swap）"
+        echo "max_map_count=$(cat /proc/sys/vm/max_map_count)"
+        echo "=== 最终内存/swap 状态 ==="
         free -h
-        echo "=== mmap 上限 ==="
-        cat /proc/sys/vm/max_map_count
+        swapon --show
 
     - name: Setup environment
       run: |
@@ -259,19 +256,30 @@ jobs:
         [ $JOBS -lt 2 ] && JOBS=2
         echo "使用 $JOBS 个并行任务"
 
-        # 看门狗：磁盘可用 < 2GB 就主动杀编译；心跳同时写进 build.log
-        # （ninja 在非 tty 下长时间不输出，build.log 可能是空的，那样外送脚本会一条都发不出去）
+        # 看门狗：磁盘 < 2GB 或 内存可用 < 800MB 就主动杀编译并留证据
+        # （前三次都是"VM 直接消失、日志一个字都没留下"，必须让失败变成"带日志退出"）
         (
-          while sleep 60; do
+          while sleep 30; do
             AVAIL=$(df -m / | tail -1 | awk '{print $4}')
             MEM=$(free -m | awk '/^Mem:/{print $7}')
             SWP=$(free -m | awk '/^Swap:/{print $3}')
             LAST=$(tail -1 build.log 2>/dev/null | cut -c1-150)
-            LINE="[$(date +%H:%M:%S)] 心跳 | 磁盘 ${AVAIL}MB | 内存 ${MEM}MB | swap ${SWP}MB | 最后: ${LAST}"
+            LINE="[$(date +%H:%M:%S)] 心跳 | 磁盘 ${AVAIL}MB | 内存可用 ${MEM}MB | swap ${SWP}MB | 最后: ${LAST}"
             echo "$LINE"
             echo "$LINE" >> build.log 2>/dev/null || true
             if [ "$AVAIL" -lt 2048 ]; then
               echo "::error::磁盘可用仅 ${AVAIL}MB (<2GB)，主动中止编译，保留日志"
+              dmesg | tail -20 || true
+              pkill -9 -f ninja 2>/dev/null || true
+              pkill -9 -f soong_ui 2>/dev/null || true
+              break
+            fi
+            if [ "$MEM" -lt 800 ]; then
+              echo "::error::内存可用仅 ${MEM}MB (<800MB)，主动中止编译，保留日志"
+              echo "--- dmesg 最后 30 行（找 OOM killer）---"
+              dmesg | tail -30 || true
+              echo "--- 内存占用前 10 的进程 ---"
+              ps -eo pid,rss,comm --sort=-rss | head -11 || true
               pkill -9 -f ninja 2>/dev/null || true
               pkill -9 -f soong_ui 2>/dev/null || true
               break
