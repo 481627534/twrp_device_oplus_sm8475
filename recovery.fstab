@@ -1,40 +1,60 @@
 # Copyright (c) 2019-2020 The Linux Foundation. All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
-# modification, are permitted (subject to the limitations in the
-# disclaimer below) provided that the following conditions are met:
+# modification, are permitted provided that the following conditions are met:
 #
 #    * Redistributions of source code must retain the above copyright
 #      notice, this list of conditions and the following disclaimer.
-#
-#    * Redistributions in binary form must reproduce the above
-#      copyright notice, this list of conditions and the following
-#      disclaimer in the documentation and/or other materials provided
-#      with the distribution.
-#
+#    * Redistributions in binary form must reproduce the above copyright
+#      notice, this list of conditions and the following disclaimer in the
+#      documentation and/or other materials provided with the distribution.
 #    * Neither the name of The Linux Foundation nor the names of its
-#      contributors may be used to endorse or promote products derived
-#      from this software without specific prior written permission.
+#      contributors may be used to endorse or promote products derived from
+#      this software without specific prior written permission.
 #
-# NO EXPRESS OR IMPLIED LICENSES TO ANY PARTY'S PATENT RIGHTS ARE
-# GRANTED BY THIS LICENSE. THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT
-# HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED
-# WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF
-# MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
-# IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR
-# ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
-# DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE
-# GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
-# INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER
-# IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR
-# OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN
-# IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+# THIS SOFTWARE IS PROVIDED "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES,
+# INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT,
+# INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
+# NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+# DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+# THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+# (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
+# THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 # Android fstab file.
-# The filesystem that contains the filesystem checker binary (typically /system) cannot
-# specify MF_CHECK, and must come before any filesystems that do specify MF_CHECK
+# The filesystem that contains the filesystem checker binary (typically /system)
+# cannot specify MF_CHECK, and must come before any filesystems that do specify
+# MF_CHECK
+#
+# =============================================================================
+# 2026-11-04 按 PGW110 实机重写。
+# 原文件是从别的 sm8475 机型抄来的，含大量本机不存在 / 不该出现在 TWRP 里的分区。
+#
+# 删除四类，逐条理由：
+#   ① 🔴 引导链（R5：跨机型刷引导链 = 终局，无补救）
+#      xbl / xblbak / abl / ablbak / tz / tzbak / rpm / rpmbak / sbl1 / sbl1bak
+#      / cmnlib / cmnlibbak / keymaster / keymasterbak / devcfg / aboot / abootbak
+#      —— 本机是 xbl+abl 新体系，这些分区"出现在 TWRP 可写列表里"本身就是变砖入口。
+#   ② 🔴 唯一性数据（R9：永久私有，误写即丢设备身份）
+#      modemst1 / modemst2（IMEI 存储）、static_nv_bk / oppodycnvbk（OPPO NV）、
+#      devinfo（存 BL 解锁状态，写坏可能把 BL 锁回去）。
+#   ③ 本机不存在的分区：mdtp / reserve4 / DDR。
+#   ④ 本机没有独立 cache 分区。原来拿 oplusreserve2 顶替，语义不对、还可能误写
+#      OPPO 预留区。TWRP 的临时空间用 /tmp（tmpfs）即可，不需要 /cache。
+#
+# 保留：全部逻辑分区（备份/挂载需要）、metadata、data、boot、recovery、
+#       misc（BCB —— TWRP 清开机指令要用，见 05_经验总结 044 条）、persist、
+#       external_sd、modem 固件挂载。
+#
+# ⚠️ /boot、/recovery 保持裸名、不加 _a/_b 后缀：TWRP 会按 ro.boot.slot_suffix
+#    自动补当前槽后缀。写死 _a 会在当前槽是 _b 时直接错位。
+# ⚠️ /vendor_dlkm 必须在列表里：TW_LOAD_VENDOR_MODULES 要加载的 .ko 全在这个分区，
+#    挂不上就等于没有显示驱动（2026-11-04 黑屏根因链的一环）。
+# =============================================================================
 
-#<src>                                    <mnt_point>            <type>  <mnt_flags and options>                                                                         <fs_mgr_flags>
+#<mount_point>                            <fstype>  <device>                                       <flags>
 /system                  ext4      system                                         flags=display=system;logical;slotselect
 /system                  erofs     system                                         flags=display=system;logical;slotselect
 /system_ext              ext4      system_ext                                     flags=display=system_ext;logical;slotselect
@@ -69,40 +89,11 @@
 /my_manifest             erofs     my_manifest                                    flags=display=my_manifest;logical;slotselect
 /my_engineering          ext4      my_engineering                                 flags=display=my_engineering;logical;slotselect
 /my_engineering          erofs     my_engineering                                 flags=display=my_engineering;logical;slotselect
-/cache                   ext4      /dev/block/by-name/oplusreserve2               flags=display=cache
 /metadata                ext4      /dev/block/by-name/metadata                    flags=display=metadata
 /data                    f2fs      /dev/block/bootdevice/by-name/userdata         flags=display=data
 /external_sd             vfat      /dev/block/mmcblk1p1                           flags=display=external_sd
 /boot                    emmc      /dev/block/bootdevice/by-name/boot             flags=display=boot
 /recovery                emmc      /dev/block/bootdevice/by-name/recovery         flags=display=recovery
 /misc                    emmc      /dev/block/bootdevice/by-name/misc             flags=display=misc
-/aboot                   emmc      /dev/block/bootdevice/by-name/aboot            flags=display=aboot
-/abootbak                emmc      /dev/block/bootdevice/by-name/abootbak         flags=display=abootbak
-/vendor/firmware_mnt     vfat      /dev/block/bootdevice/by-name/modem            flags=display=firmware_mnt;slotselect
-/sbl1                    emmc      /dev/block/bootdevice/by-name/sbl1             flags=display=sbl1
-/sbl1bak                 emmc      /dev/block/bootdevice/by-name/sbl1bak          flags=display=sbl1bak
-/rpm                     emmc      /dev/block/bootdevice/by-name/rpm              flags=display=rpm
-/rpmbak                  emmc      /dev/block/bootdevice/by-name/rpmbak           flags=display=rpmbak
-/tz                      emmc      /dev/block/bootdevice/by-name/tz               flags=display=tz
-/tzbak                   emmc      /dev/block/bootdevice/by-name/tzbak            flags=display=tzbak
-/modemst1                emmc      /dev/block/bootdevice/by-name/modem_st1        flags=display=modemst1
-/modemst2                emmc      /dev/block/bootdevice/by-name/modem_st2        flags=display=modemst2
-/static_nv_bk            emmc      /dev/block/bootdevice/by-name/oppostanvbk      flags=display=static_nv_bk
-/oppodycnvbk             emmc      /dev/block/bootdevice/by-name/oppodycnvbk      flags=display=oppodycnvbk
-/logo                    emmc      /dev/block/bootdevice/by-name/LOGO             flags=display=logo
-/reserve4                emmc      /dev/block/bootdevice/by-name/reserve4         flags=display=reserve4
-/dsp                     emmc      /dev/block/bootdevice/by-name/dsp              flags=display=dsp
-/DDR                     emmc      /dev/block/bootdevice/by-name/DDR              flags=display=DDR
-/devcfg                  emmc      /dev/block/bootdevice/by-name/devcfg           flags=display=devcfg
-/mdtp                    emmc      /dev/block/bootdevice/by-name/mdtp             flags=display=mdtp
-/cmnlib                  emmc      /dev/block/bootdevice/by-name/cmnlib           flags=display=cmnlib
-/cmnlibbak               emmc      /dev/block/bootdevice/by-name/cmnlibbak        flags=display=cmnlibbak
-/keymaster               emmc      /dev/block/bootdevice/by-name/keymaster        flags=display=keymaster
-/keymasterbak            emmc      /dev/block/bootdevice/by-name/keymasterbak     flags=display=keymasterbak
-/apdp                    emmc      /dev/block/bootdevice/by-name/apdp             flags=display=apdp
-/devinfo                 emmc      /dev/block/bootdevice/by-name/devinfo          flags=display=devinfo
+/vendor/firmware_mnt     vfat      /dev/block/bootdevice/by-name/modem            flags=display=firmware_mnt
 /persist                 ext4      /dev/block/bootdevice/by-name/persist          flags=display=persist
-/abl                     emmc      /dev/block/bootdevice/by-name/abl              flags=display=abl
-/ablbak                  emmc      /dev/block/bootdevice/by-name/ablbak           flags=display=ablbak
-/xbl                     emmc      /dev/block/bootdevice/by-name/xbl              flags=display=xbl
-/xblbak                  emmc      /dev/block/bootdevice/by-name/xblbak           flags=display=xblbak

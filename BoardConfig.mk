@@ -117,11 +117,17 @@ TW_INCLUDE_RESETPROP          := true
 TW_USE_TOOLBOX                := true
 
 # TWRP display
+# 2026-11-04 实机采集（主系统 adb 实测）：
+#   背光节点 /sys/class/backlight/panel0-backlight/ 存在，max_brightness = 4095 ✅
+#   CPU 温度 thermal_zone25 = cpuss-0，实测 36400 ✅
+#   ⇒ 这两个路径原本就是对的，黑屏不是它们的问题（见下方 TW_LOAD_VENDOR_MODULES）
 TW_BRIGHTNESS_PATH      := /sys/class/backlight/panel0-backlight/brightness
 TW_DEFAULT_BRIGHTNESS   := 2048
 TW_FRAMERATE            := 120
 TW_MAX_BRIGHTNESS       := 4095
-TW_SCREEN_BLANK_ON_BOOT := true
+# 关掉开机自动息屏：否则"显示链路已通"和"根本没显示"在肉眼上无法区分，
+# 排查时会白烧一轮构建额度。
+TW_SCREEN_BLANK_ON_BOOT := false
 TW_THEME                := portrait_hdpi
 
 # TWRP file system
@@ -152,7 +158,22 @@ TW_CUSTOM_CPU_TEMP_PATH                 := "/sys/class/thermal/thermal_zone25/te
 TW_EXCLUDE_APEX                         := true
 TW_EXCLUDE_DEFAULT_USB_INIT             := true
 TW_EXTRA_LANGUAGES                      := true
-TW_LOAD_VENDOR_MODULES                  := ""
-TW_LOAD_VENDOR_MODULES_EXCLUDE_GKI      := true
+# ★ 黑屏根因修复（2026-11-04 实机采集后定案）
+# 现象：TWRP 能启动、adb/root/USB 全通，但屏幕全黑。
+# 根因：msm_drm.ko 是「模块」（8,113,096 B），面板驱动编在它里面，没有独立的 panel_*.ko。
+#       原来 TW_LOAD_VENDOR_MODULES 为空 + EXCLUDE_GKI=true ⇒ msm_drm 从未被加载
+#       ⇒ 无 DRM 节点 ⇒ 屏幕不亮，而内核 / adbd / USB 一切正常。
+# 依据：modinfo msm_drm.ko → depends 25 个模块；
+#       /vendor/lib/modules/modules.load 里原厂自己的加载顺序（msm_drm 排最后）。
+# 说明：只需列「入口」，modules.dep 存在 ⇒ modprobe 自动按依赖加载其余 30 多个。
+#       顺序照抄原厂 modules.load —— msm_drm 永远最后一个（依赖全在前面）。
+#       ⚠️ 必须写单行：make 的 `\` 续行会在引号内插入空格。
+# ⚠️ 不能改成全量加载：382 个模块共 152 MB，recovery 分区只有 100 MiB，必爆。
+# ⚠️ 模块文件在 vendor_dlkm 分区、不在 ramdisk ⇒ recovery.fstab 的 /vendor_dlkm 条目必须有效。
+TW_LOAD_VENDOR_MODULES                  := "panel_event_notifier.ko oplus_bsp_tp_custom.ko oplus_bsp_tp_comon.ko oplus_bsp_tp_notify.ko oplus_bsp_tp_tcm_S3910.ko oplus_bsp_tp_syna_comnon.ko msm_drm.ko"
+TW_LOAD_VENDOR_MODULES_EXCLUDE_GKI      := false
+
+# 触摸设备名（实测 /proc/bus/input/devices → Name="touchpanel"，Handlers=event5）
+TW_WHITELIST_INPUT                      := "touchpanel"
 TW_NO_SCREEN_BLANK                      := true
 TW_USE_SERIALNO_PROPERTY_FOR_DEVICE_ID  := true
