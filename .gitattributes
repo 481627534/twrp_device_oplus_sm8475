@@ -1,0 +1,3 @@
+# TWRP device tree: keep shell scripts LF even on Windows checkouts.
+# A CRLF shebang ("#!/system/bin/sh\r") makes the script fail to exec on device.
+*.sh   text eol=lf

@@ -96,4 +96,9 @@
 /recovery                emmc      /dev/block/bootdevice/by-name/recovery         -    flags=display=recovery
 /misc                    emmc      /dev/block/bootdevice/by-name/misc             -    flags=display=misc
 /vendor/firmware_mnt     vfat      /dev/block/bootdevice/by-name/modem            -    flags=display=firmware_mnt
+# persist：init.recovery.qcom.rc 已在 on fs 阶段把它常驻挂到 /mnt/vendor/persist
+# （TWRP 设置文件固定写 /mnt/vendor/persist/TWRP/.twrp_settings，见 05_经验总结 054）。
+# 这里保留 /persist 只是给 TWRP 的备份/挂载页用，是同一分区的第二个挂载点，
+# ⚠️ 不要把这一行的挂载点改成 /mnt/vendor/persist：那样 TWRP 初始化时会
+#    MountPersistRootIfNeeded() 挂上再立刻卸掉，反而把 init 挂的 persist 卸走。
 /persist                 ext4      /dev/block/bootdevice/by-name/persist          -    flags=display=persist

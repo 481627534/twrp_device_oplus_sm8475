@@ -35,8 +35,21 @@ service post-boot-script /system/bin/sh -c /vendor/bin/init.kernel.post_boot-pin
     oneshot
     seclabel u:r:recovery:s0
 
+# PGW110: 清 misc 里残留的 BCB（"boot-recovery"）。
+# TWRP 自带的 ClearBootloaderMessage() 走 AOSP ReadDefaultFstab()，读不懂本机这种
+# 5 列 TWRP fstab（mount_point 不在第一列是设备名），匹配不到 /misc ⇒ 静默失败。
+# BCB 残留时 bootloader 每次启动都把控制权交给 recovery，表现为「TWRP 里点
+# 重启→系统，还是回到 TWRP」，与 recovery 镜像内容无关（见 05_经验总结 044/054）。
+service clearbcb /system/bin/sh /system/bin/clearbcb.sh
+    user root
+    group root
+    oneshot
+    seclabel u:r:recovery:s0
+
 on init
     setprop sys.usb.configfs 1
+    # PGW110: 关闭 TWRP 的触感反馈（键盘按键震动）。双保险之一。
+    setprop tw_disable_haptics 1
     start vendor.boot-qti
     start vendor.gatekeeper_default
 
@@ -56,8 +69,18 @@ on fs
     chown system system /dev/ion
     mkdir /mnt/vendor 0775 shell system
     mkdir /mnt/vendor/persist 0775 shell system
-    mkdir /tmp/persist 0775 shell system
-    mount none /tmp/persist /mnt/vendor/persist bind rec
+    # PGW110: 真挂 persist（参数照抄原厂 /vendor/etc/fstab.qcom），取代原来的 tmpfs bind。
+    # 根因：TWRP 的设置文件固定写 <TW_PERSIST_DIR>/.twrp_settings，即
+    #   /mnt/vendor/persist/TWRP/.twrp_settings
+    # 但 TWRP 自己挂载时走 TWPartitionManager::MountByPath()，里面先经
+    #   TWFunc::GetRootPath() 把路径截成第一级 ⇒ "/mnt" ⇒ 匹配不到任何分区，
+    # 所以它不会自己挂 persist；而原来这里 bind 了一块 tmpfs 上去 ⇒ 设置全写进
+    # 内存，重启即丢（05_经验总结 054）。这里在 init 阶段常驻挂载，TWRP 之后
+    # 的读写就直接落到真实分区。
+    mount ext4 /dev/block/bootdevice/by-name/persist /mnt/vendor/persist noatime,nosuid,nodev,barrier=1
+    mkdir /mnt/vendor/persist/TWRP 0775 root root
+    # 启动即清 BCB，避免「重启又回 recovery」（详见上方 clearbcb service 注释）。
+    start clearbcb
     install_keyring
 
 on post-fs
@@ -82,4 +105,8 @@ on property:twrp.variant.files_copied=1
     start prepdecrypt.vendor
     umount /vendor
     symlink /firmware /vendor/firmware_mnt
-    start vendor.oplus.vibrator
+    # PGW110: 不启动 vendor.oplus.vibrator。
+    # 该 HAL 在 recovery 下初始化失败 -> init 每 5s 重启一次 -> 震动马达被反复触发，
+    # 表现为「点键盘就震、停不下来」。TWRP 的震动开关 tw_disable_haptics 只是 GUI 设置，
+    # 挡不住这里显式 start，所以必须从 rc 里删掉这一行。
+    # 需要震动时再手动 start vendor.oplus.vibrator。
