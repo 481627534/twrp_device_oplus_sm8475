@@ -55,45 +55,45 @@
 # =============================================================================
 
 #<mount_point>                            <fstype>  <device>                                       <flags>
-/system                  ext4      system                                         flags=display=system;logical;slotselect
-/system                  erofs     system                                         flags=display=system;logical;slotselect
-/system_ext              ext4      system_ext                                     flags=display=system_ext;logical;slotselect
-/system_ext              erofs     system_ext                                     flags=display=system_ext;logical;slotselect
-/product                 ext4      product                                        flags=display=product;logical;slotselect
-/product                 erofs     product                                        flags=display=product;logical;slotselect
-/vendor                  ext4      vendor                                         flags=display=vendor;logical;slotselect
-/vendor                  erofs     vendor                                         flags=display=vendor;logical;slotselect
-/vendor_dlkm             ext4      vendor_dlkm                                    flags=display=vendor_dlkm;logical;slotselect
-/vendor_dlkm             erofs     vendor_dlkm                                    flags=display=vendor_dlkm;logical;slotselect
-/odm                     ext4      odm                                            flags=display=odm;logical;slotselect
-/odm                     erofs     odm                                            flags=display=odm;logical;slotselect
-/odm_dlkm                ext4      odm_dlkm                                       flags=display=odm_dlkm;logical;slotselect
-/odm_dlkm                erofs     odm_dlkm                                       flags=display=odm_dlkm;logical;slotselect
-/my_product              ext4      my_product                                     flags=display=my_product;logical;slotselect
-/my_product              erofs     my_product                                     flags=display=my_product;logical;slotselect
-/my_company              ext4      my_company                                     flags=display=my_company;logical;slotselect
-/my_company              erofs     my_company                                     flags=display=my_company;logical;slotselect
-/my_carrier              ext4      my_carrier                                     flags=display=my_carrier;logical;slotselect
-/my_carrier              erofs     my_carrier                                     flags=display=my_carrier;logical;slotselect
-/my_region               ext4      my_region                                      flags=display=my_region;logical;slotselect
-/my_region               erofs     my_region                                      flags=display=my_region;logical;slotselect
-/my_bigball              ext4      my_bigball                                     flags=display=my_bigball;logical;slotselect
-/my_bigball              erofs     my_bigball                                     flags=display=my_bigball;logical;slotselect
-/my_heytap               ext4      my_heytap                                      flags=display=my_heytap;logical;slotselect
-/my_heytap               erofs     my_heytap                                      flags=display=my_heytap;logical;slotselect
-/my_stock                ext4      my_stock                                       flags=display=my_stock;logical;slotselect
-/my_stock                erofs     my_stock                                       flags=display=my_stock;logical;slotselect
-/my_preload              ext4      my_preload                                     flags=display=my_preload;logical;slotselect
-/my_preload              erofs     my_preload                                     flags=display=my_preload;logical;slotselect
-/my_manifest             ext4      my_manifest                                    flags=display=my_manifest;logical;slotselect
-/my_manifest             erofs     my_manifest                                    flags=display=my_manifest;logical;slotselect
-/my_engineering          ext4      my_engineering                                 flags=display=my_engineering;logical;slotselect
-/my_engineering          erofs     my_engineering                                 flags=display=my_engineering;logical;slotselect
-/metadata                ext4      /dev/block/by-name/metadata                    flags=display=metadata
-/data                    f2fs      /dev/block/bootdevice/by-name/userdata         flags=display=data
-/external_sd             vfat      /dev/block/mmcblk1p1                           flags=display=external_sd
-/boot                    emmc      /dev/block/bootdevice/by-name/boot             flags=display=boot
-/recovery                emmc      /dev/block/bootdevice/by-name/recovery         flags=display=recovery
-/misc                    emmc      /dev/block/bootdevice/by-name/misc             flags=display=misc
-/vendor/firmware_mnt     vfat      /dev/block/bootdevice/by-name/modem            flags=display=firmware_mnt
-/persist                 ext4      /dev/block/bootdevice/by-name/persist          flags=display=persist
+/system                  ext4      system                                         -    flags=display=system;logical;slotselect
+/system                  erofs     system                                         -    flags=display=system;logical;slotselect
+/system_ext              ext4      system_ext                                     -    flags=display=system_ext;logical;slotselect
+/system_ext              erofs     system_ext                                     -    flags=display=system_ext;logical;slotselect
+/product                 ext4      product                                        -    flags=display=product;logical;slotselect
+/product                 erofs     product                                        -    flags=display=product;logical;slotselect
+/vendor                  ext4      vendor                                         -    flags=display=vendor;logical;slotselect
+/vendor                  erofs     vendor                                         -    flags=display=vendor;logical;slotselect
+/vendor_dlkm             ext4      vendor_dlkm                                    -    flags=display=vendor_dlkm;logical;slotselect
+/vendor_dlkm             erofs     vendor_dlkm                                    -    flags=display=vendor_dlkm;logical;slotselect
+/odm                     ext4      odm                                            -    flags=display=odm;logical;slotselect
+/odm                     erofs     odm                                            -    flags=display=odm;logical;slotselect
+/odm_dlkm                ext4      odm_dlkm                                       -    flags=display=odm_dlkm;logical;slotselect
+/odm_dlkm                erofs     odm_dlkm                                       -    flags=display=odm_dlkm;logical;slotselect
+/my_product              ext4      my_product                                     -    flags=display=my_product;logical;slotselect
+/my_product              erofs     my_product                                     -    flags=display=my_product;logical;slotselect
+/my_company              ext4      my_company                                     -    flags=display=my_company;logical;slotselect
+/my_company              erofs     my_company                                     -    flags=display=my_company;logical;slotselect
+/my_carrier              ext4      my_carrier                                     -    flags=display=my_carrier;logical;slotselect
+/my_carrier              erofs     my_carrier                                     -    flags=display=my_carrier;logical;slotselect
+/my_region               ext4      my_region                                      -    flags=display=my_region;logical;slotselect
+/my_region               erofs     my_region                                      -    flags=display=my_region;logical;slotselect
+/my_bigball              ext4      my_bigball                                     -    flags=display=my_bigball;logical;slotselect
+/my_bigball              erofs     my_bigball                                     -    flags=display=my_bigball;logical;slotselect
+/my_heytap               ext4      my_heytap                                      -    flags=display=my_heytap;logical;slotselect
+/my_heytap               erofs     my_heytap                                      -    flags=display=my_heytap;logical;slotselect
+/my_stock                ext4      my_stock                                       -    flags=display=my_stock;logical;slotselect
+/my_stock                erofs     my_stock                                       -    flags=display=my_stock;logical;slotselect
+/my_preload              ext4      my_preload                                     -    flags=display=my_preload;logical;slotselect
+/my_preload              erofs     my_preload                                     -    flags=display=my_preload;logical;slotselect
+/my_manifest             ext4      my_manifest                                    -    flags=display=my_manifest;logical;slotselect
+/my_manifest             erofs     my_manifest                                    -    flags=display=my_manifest;logical;slotselect
+/my_engineering          ext4      my_engineering                                 -    flags=display=my_engineering;logical;slotselect
+/my_engineering          erofs     my_engineering                                 -    flags=display=my_engineering;logical;slotselect
+/metadata                ext4      /dev/block/by-name/metadata                    -    flags=display=metadata
+/data                    f2fs      /dev/block/bootdevice/by-name/userdata         -    flags=display=data
+/external_sd             vfat      /dev/block/mmcblk1p1                           -    flags=display=external_sd
+/boot                    emmc      /dev/block/bootdevice/by-name/boot             -    flags=display=boot
+/recovery                emmc      /dev/block/bootdevice/by-name/recovery         -    flags=display=recovery
+/misc                    emmc      /dev/block/bootdevice/by-name/misc             -    flags=display=misc
+/vendor/firmware_mnt     vfat      /dev/block/bootdevice/by-name/modem            -    flags=display=firmware_mnt
+/persist                 ext4      /dev/block/bootdevice/by-name/persist          -    flags=display=persist

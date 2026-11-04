@@ -62,8 +62,19 @@ PRODUCT_PLATFORM                := taro
 TARGET_BOOTLOADER_BOARD_NAME    := taro
 
 # Crypto
+# 2026-11-04 实测：TWRP 能进界面但解不了 data，日志里
+#   I:Keymaster_Ver::Using keymaster version '' for decryption   ← 版本空
+#   keystore2: Cannot connect to Keymint → HARDWARE_TYPE_UNAVAILABLE → panic
+# 根因：本机 vendor 是 AIDL keymint，而 vendor/etc/vintf/manifest.xml 只声明了
+#       gatekeeper；keymint 的声明在 manifest/ 子目录里，TWRP 不读子目录。
+#       ⇒ 同时补 FBE 开关（下面）+ 把 keymint 声明合并进主 manifest.xml。
 BOARD_USES_METADATA_PARTITION   := true
 TW_INCLUDE_CRYPTO               := true
+TW_INCLUDE_CRYPTO_FBE           := true
+# metadata 解密走 policy 2（本机 ro.crypto.metadata_init_delete_all_keys.enabled=true）
+TW_USE_FSCRYPT_POLICY           := 2
+# 让 TWRP 用检测到的 keymaster/keymint 版本，而不是回落到默认
+TW_FORCE_KEYMASTER_VER          := true
 
 # Debug
 TARGET_USES_LOGD                := true
@@ -150,7 +161,10 @@ TW_DEVICE_VERSION               := PGW110
 BOARD_AVB_ENABLE := true
 
 # Vibrator
-TW_SUPPORT_INPUT_AIDL_HAPTICS := true
+# 2026-11-04 实测：设 true 时 vendor.oplus.vibrator 服务无限重启（init.svc 一直是 restarting），
+# 表现为「进 TWRP 后一直震」。本机震动是 AIDL（vendor.oplus.hardware.vibrator），
+# 该实现在 recovery 下不工作 ⇒ 关掉，宁可没震动，不能一直震。
+TW_SUPPORT_INPUT_AIDL_HAPTICS := false
 
 # Other TWRP Configurations
 TARGET_RECOVERY_QCOM_RTC_FIX            := true

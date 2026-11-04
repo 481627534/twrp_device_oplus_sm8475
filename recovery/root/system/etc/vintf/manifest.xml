@@ -1,2 +1,10 @@
 <manifest version="8.0" type="framework">
+    <!-- 2026-11-04 PGW110：TWRP 的 Keymaster_Ver 在 vendor manifest 读不到时会回落到
+         "ramdisk manifest"，而 /vendor 挂载后 ramdisk 版会被覆盖，只有这份 /system 的
+         不会被覆盖。这里补一份 keymint 声明作为最后兜底。 -->
+    <hal format="aidl">
+        <name>android.hardware.security.keymint</name>
+        <version>3</version>
+        <fqname>IKeyMintDevice/default</fqname>
+    </hal>
 </manifest>

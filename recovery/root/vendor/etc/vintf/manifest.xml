@@ -7,6 +7,28 @@
         <name>android.hardware.gatekeeper</name>
         <fqname>IGatekeeper/default</fqname>
     </hal>
+    <!-- 2026-11-04 PGW110 修订：本机 keymint 是 AIDL，原声明在 manifest/ 子目录，
+         TWRP 3.7.1 的 Keymaster_Ver 检测只读主 manifest.xml、不遍历子目录，
+         导致 "Using keymaster version ''" ⇒ keystore2 连不上 keymint ⇒ 解密失败。
+         故把 keymint 一族合并进主 manifest。 -->
+    <hal format="aidl">
+        <name>android.hardware.security.keymint</name>
+        <version>3</version>
+        <fqname>IKeyMintDevice/default</fqname>
+    </hal>
+    <hal format="aidl">
+        <name>android.hardware.security.sharedsecret</name>
+        <fqname>ISharedSecret/default</fqname>
+    </hal>
+    <hal format="aidl">
+        <name>android.hardware.security.secureclock</name>
+        <fqname>ISecureClock/default</fqname>
+    </hal>
+    <hal format="aidl">
+        <name>android.hardware.security.keymint</name>
+        <version>3</version>
+        <fqname>IRemotelyProvisionedComponent/default</fqname>
+    </hal>
     <sepolicy>
         <version>32.0</version>
     </sepolicy>
