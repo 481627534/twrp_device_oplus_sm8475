@@ -1,7 +1,19 @@
 # Copyright (c) 2019 Qualcomm Technologies, Inc.
 # All Rights Reserved.
 # Confidential and Proprietary - Qualcomm Technologies, Inc.
-
+#
+# PGW110 v0.6: 对齐 C16 原厂 ssgtzd.rc。
+# 背景：v0.6 打包的是 C16 的 ssgtzd 二进制（donor 版在本机 TEE 上会
+#   ConnectionSecurity ELF_SIGNATURE_ERROR 12 崩溃循环），而 rc 还是 donor 的。
+# 三处必须跟着改：
+#   1. group 去掉 oem_2912 / wakelock —— recovery 的 /system/etc/group 里没有
+#      oem_2912 这个 vendor AID，init 解析 group 失败会**静默不启动**该 service，
+#      表现为「编译全绿、上机 ssgtzd 不在」。改成 C16 的 group system。
+#   2. socket 的属组从 oem_2912 改成 inet（AID 3003，AOSP group 里必有）。
+#   3. 补 qwes_ipc socket —— C16 原厂 rc 有这条，donor 没有。
+# 保留 donor 的 disabled + seclabel：
+#   disabled 由本文件 on early-boot 与 init.recovery.qcom.rc 的
+#   property:servicemanager.ready 显式 start；seclabel 必须落在 u:r:recovery:s0。
 
 # Create the directories used by qwes
 on post-fs-data
@@ -11,14 +23,12 @@ on post-fs-data
 on early-boot
     start vendor.ssgtzd
 
-# Used 'disabled' flag, so daemon won't be started until explicit start
 service vendor.ssgtzd /vendor/bin/ssgtzd
     class late_start
     user system
-    group system oem_2912 wakelock
-    capabilities WAKE_ALARM BLOCK_SUSPEND
+    group system
     disabled
-    socket ssgtzd stream 0660 system oem_2912
-    socket ssgtzd_opener stream 0660 system system
-    disabled
+    socket ssgtzd stream 0660 system inet
+    socket ssgtzd_opener stream 0660 system inet
+    socket qwes_ipc stream 0660 system inet
     seclabel u:r:recovery:s0

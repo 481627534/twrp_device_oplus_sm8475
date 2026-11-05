@@ -1,35 +1,40 @@
 <!--
-    Input:
-        device/qcom/pineapple/manifest_pineapple.xml
+  PGW110 / TWRP recovery 用的 /vendor VINTF device manifest（v0.6）
+  ───────────────────────────────────────────────────────────────
+  相对原 donor（device/qcom/pineapple/manifest_pineapple.xml）的改动原因：
+    1. 去掉 AIDL <hal> 里的 <version>3</version> —— 对齐 C16 原厂分片写法，
+       带 <version> 会让 HAL 声明匹配不上。
+    2. 去掉 <sepolicy> 元素 —— manifest schema 里没有这个标签，某些版本会让整份解析失败。
+    3. 补齐 keymint 一族（IKeyMintDevice / IRemotelyProvisionedComponent /
+       ISecureClock / ISharedSecret）到主 manifest —— 原声明在 manifest/ 子目录，
+       TWRP 的 Keymaster_Ver 检测只读主 manifest.xml。
+    4. 补 health 声明 —— 否则 servicemanager 拒绝注册 health（TWRP 电量恒 100% 的相关一环）。
+
+  必须 type="device"：写 "framework" 会让 servicemanager 忽略整份 manifest。
 -->
-<manifest version="7.0" type="device" target-level="8">
-    <hal format="aidl">
-        <name>android.hardware.gatekeeper</name>
-        <fqname>IGatekeeper/default</fqname>
-    </hal>
-    <!-- 2026-11-04 PGW110 修订：本机 keymint 是 AIDL，原声明在 manifest/ 子目录，
-         TWRP 3.7.1 的 Keymaster_Ver 检测只读主 manifest.xml、不遍历子目录，
-         导致 "Using keymaster version ''" ⇒ keystore2 连不上 keymint ⇒ 解密失败。
-         故把 keymint 一族合并进主 manifest。 -->
+<manifest version="1.0" type="device" target-level="8">
     <hal format="aidl">
         <name>android.hardware.security.keymint</name>
-        <version>3</version>
         <fqname>IKeyMintDevice/default</fqname>
-    </hal>
-    <hal format="aidl">
-        <name>android.hardware.security.sharedsecret</name>
-        <fqname>ISharedSecret/default</fqname>
     </hal>
     <hal format="aidl">
         <name>android.hardware.security.secureclock</name>
         <fqname>ISecureClock/default</fqname>
     </hal>
     <hal format="aidl">
+        <name>android.hardware.security.sharedsecret</name>
+        <fqname>ISharedSecret/default</fqname>
+    </hal>
+    <hal format="aidl">
         <name>android.hardware.security.keymint</name>
-        <version>3</version>
         <fqname>IRemotelyProvisionedComponent/default</fqname>
     </hal>
-    <sepolicy>
-        <version>32.0</version>
-    </sepolicy>
+    <hal format="aidl">
+        <name>android.hardware.gatekeeper</name>
+        <fqname>IGatekeeper/default</fqname>
+    </hal>
+    <hal format="aidl">
+        <name>android.hardware.health</name>
+        <fqname>IHealth/default</fqname>
+    </hal>
 </manifest>

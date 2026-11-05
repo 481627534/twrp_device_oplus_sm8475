@@ -184,6 +184,16 @@ jobs:
       run: |
         git clone ${{ github.event.inputs.DEVICE_TREE_URL }} -b ${{ github.event.inputs.DEVICE_TREE_BRANCH }} device/${{ github.event.inputs.DEVICE_PATH }}
 
+    # PGW110：TWRP 电量恒显 100% 的修复。
+    # 根因：recovery 链接 android.hardware.health-V4-ndk.so，但 battery_utils.cpp 仍调
+    # getCapacity()；Health AIDL V3+ 已把它改成固定返回 EX_UNSUPPORTED_OPERATION，
+    # 于是落到「无电池设备」分支硬编码 100。补丁改为直接读内核 sysfs 节点。
+    # 锚点找不到时脚本以非 0 退出，让这里显式失败（避免静默少打补丁）。
+    - name: Patch recovery battery capacity (PGW110)
+      run: |
+        python3 device/${{ github.event.inputs.DEVICE_PATH }}/tools/patch_battery_capacity.py \
+          bootable/recovery/recovery_utils/battery_utils.cpp
+
     - name: Generate build info
       run: |
         echo -e "$BUILD_INFO" >> INFO.txt

@@ -10,8 +10,11 @@
 #   所以必须由 init 侧把 persist 挂起来。v0.4 直接在 `on fs` 里写 mount 失败，
 #   判断是 ueventd 的 by-name 符号链接还没就绪，故这里做等待 + 重试 + 留证。
 #
-# 本脚本在 init 的 `exec` 里同步执行（init 会 waitpid），所以它跑完之前
-# TWRP 主进程不会启动，挂载一定早于 InfoManager::LoadValues 读设置。
+# 本脚本由 init 用 `exec_start mountpersist`（oneshot service）同步调用 —— init 会
+# 等它退出再继续，所以它跑完之前 TWRP 主进程不会启动，挂载一定早于
+# InfoManager::LoadValues 读设置。
+# ⚠️ v0.5 用的是 `exec -- /system/bin/sh ...`，上机后本脚本一行都没执行
+#    （/tmp/mountpersist.log 根本不存在），故 v0.6 改用 service + exec_start。
 
 LOG=/tmp/mountpersist.log
 DEV=/dev/block/bootdevice/by-name/persist

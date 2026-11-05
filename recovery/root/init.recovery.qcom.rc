@@ -46,6 +46,20 @@ service clearbcb /system/bin/sh /system/bin/clearbcb.sh
     oneshot
     seclabel u:r:recovery:s0
 
+# PGW110 v0.6: persist 挂载兜底脚本。
+# 为什么从 `exec` 改成 service：
+#   v0.5 用的是 `exec -- /system/bin/sh /system/bin/mountpersist.sh`，上机后
+#   /tmp/mountpersist.log 根本没生成，persist 也没挂上 —— init 侧 exec 这条路
+#   在本机的 recovery init 里不可用（同一份 rc 里 clearbcb 用 service 就正常跑）。
+#   改成 service + `exec_start`（Android 16 init.rc 自己在用，例如
+#   `exec_start apexd-bootstrap`），语义同样是「同步执行、等进程退出再继续」，
+#   保证 mount 一定早于 on boot → class_start default → recovery 主进程。
+service mountpersist /system/bin/sh /system/bin/mountpersist.sh
+    user root
+    group root
+    oneshot
+    seclabel u:r:recovery:s0
+
 on init
     setprop sys.usb.configfs 1
     # 2026-11-05：这里原来有一行 `setprop tw_disable_haptics 1`，**无效，已删**。
@@ -90,10 +104,10 @@ on fs
     #   由 shell 脚本兜底重试一次，并把全过程写入 /tmp/mountpersist.log 供下次判读。
     wait /dev/block/bootdevice/by-name/persist 10
     mount ext4 /dev/block/bootdevice/by-name/persist /mnt/vendor/persist noatime,nosuid,nodev,barrier=1
-    # 兜底 + 留证：exec 是同步的（init 会 waitpid），脚本跑完才继续，
+    # 兜底 + 留证：exec_start 是同步的（init 会等该 oneshot service 退出），
     # 所以挂载必定早于 on boot → class_start default → recovery。
     # 最坏情况：wait 10s 超时 + 脚本 sleep 5 次 = 约 15s 延迟，不会卡死。
-    exec -- /system/bin/sh /system/bin/mountpersist.sh
+    exec_start mountpersist
     mkdir /mnt/vendor/persist/TWRP 0775 root root
     # 启动即清 BCB，避免「重启又回 recovery」（详见上方 clearbcb service 注释）。
     start clearbcb
