@@ -65,7 +65,19 @@ on init
     # 2026-11-05：这里原来有一行 `setprop tw_disable_haptics 1`，**无效，已删**。
     #   该 property 与 GUI 读的 DataManager const `tw_disable_haptics` 是两套系统，
     #   互不相通。震动现在由 BoardConfig.mk 的 TW_NO_HAPTICS := true 从编译期关掉。
-    start vendor.boot-qti
+    #
+    # 2026-11-05 夜（v0.6）：**删掉 `start vendor.boot-qti`**。这是从 v0.3 就一直存在的
+    # 「5 秒一次 SIGABRT」崩溃循环的真凶，现场证据（logcat）：
+    #   W android.hardware.boot-service.qti: [libfs_mgr] unknown flag: flags=display=misc
+    #   E android.hardware.boot-service.qti: Could not read merge status:
+    #                                         failed to find /misc partition
+    #   F android.hardware.boot-service.qti: Check failed: bootcontrol_init()
+    #   I init: Service 'vendor.boot-qti' (pid 2498) received signal 6
+    # 机理：boot HAL 用 libfs_mgr 读 /etc/recovery.fstab，而那份是 **TWRP 5 列格式**
+    #   （mount_point / fstype / device / 空 / flags=display=...），不是 fs_mgr 的
+    #   6+ 列格式 ⇒ 每条都报 unknown flag，/misc 匹配不到 ⇒ bootcontrol_init() CHECK
+    #   失败 ⇒ abort ⇒ init 按 5 秒间隔无限重启。TWRP 不需要 IBootControl
+    #   （槽位走 ro.boot.slot_suffix），删掉零代价，顺带省 CPU、不再刷屏。
     start vendor.gatekeeper_default
 
 on property:ro.boot.usbcontroller=*

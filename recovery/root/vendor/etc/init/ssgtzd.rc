@@ -4,13 +4,14 @@
 #
 # PGW110 v0.6: 对齐 C16 原厂 ssgtzd.rc。
 # 背景：v0.6 打包的是 C16 的 ssgtzd 二进制（donor 版在本机 TEE 上会
-#   ConnectionSecurity ELF_SIGNATURE_ERROR 12 崩溃循环），而 rc 还是 donor 的。
-# 三处必须跟着改：
-#   1. group 去掉 oem_2912 / wakelock —— recovery 的 /system/etc/group 里没有
-#      oem_2912 这个 vendor AID，init 解析 group 失败会**静默不启动**该 service，
-#      表现为「编译全绿、上机 ssgtzd 不在」。改成 C16 的 group system。
-#   2. socket 的属组从 oem_2912 改成 inet（AID 3003，AOSP group 里必有）。
-#   3. 补 qwes_ipc socket —— C16 原厂 rc 有这条，donor 没有。
+#   ConnectionSecurity ELF_SIGNATURE_ERROR 12 崩溃循环），rc 跟着换成 C16 的配对版本。
+# 两处实质差异：
+#   1. 补 qwes_ipc socket —— C16 原厂 rc 有这条，donor 没有（唯一的真实功能差异）。
+#   2. group 从 `system oem_2912 wakelock` 收成 `system`，socket 属组从 oem_2912 改 inet。
+# ⚠️ 更正（2026-11-05 深夜实测）：我一度认为 recovery 的 group 文件里没有 oem_2912、
+#   会让 init 静默不起服务——**错的**。v0.5 里 /dev/socket/ssgtzd 的属组就是 oem_2912，
+#   说明 init 解析成功、ssgtzd 正常跑起来了。第 2 点纯粹是为了和 C16 减少变量，
+#   不是修 bug。
 # 保留 donor 的 disabled + seclabel：
 #   disabled 由本文件 on early-boot 与 init.recovery.qcom.rc 的
 #   property:servicemanager.ready 显式 start；seclabel 必须落在 u:r:recovery:s0。
