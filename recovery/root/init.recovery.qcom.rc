@@ -48,8 +48,9 @@ service clearbcb /system/bin/sh /system/bin/clearbcb.sh
 
 on init
     setprop sys.usb.configfs 1
-    # PGW110: 关闭 TWRP 的触感反馈（键盘按键震动）。双保险之一。
-    setprop tw_disable_haptics 1
+    # 2026-11-05：这里原来有一行 `setprop tw_disable_haptics 1`，**无效，已删**。
+    #   该 property 与 GUI 读的 DataManager const `tw_disable_haptics` 是两套系统，
+    #   互不相通。震动现在由 BoardConfig.mk 的 TW_NO_HAPTICS := true 从编译期关掉。
     start vendor.boot-qti
     start vendor.gatekeeper_default
 
@@ -77,7 +78,22 @@ on fs
     # 所以它不会自己挂 persist；而原来这里 bind 了一块 tmpfs 上去 ⇒ 设置全写进
     # 内存，重启即丢（05_经验总结 054）。这里在 init 阶段常驻挂载，TWRP 之后
     # 的读写就直接落到真实分区。
+    # 2026-11-05 修正（v0.4 实测失败）：原先在这里直接写 mount，真机上**没有生效**。
+    #   证据：进 TWRP 后 `/proc/mounts` 里没有 persist；日志
+    #   `InfoManager file '/mnt/vendor/persist/TWRP/.twrp_settings' not found`；
+    #   /mnt/vendor/persist 的时间戳是 1970 年（tmpfs）。
+    #   同时确认不是被 TWRP 卸的：`twPersistUnMount()` 函数体在上游已被整行注释掉，
+    #   `twPersistMount()` 又因为 MountByPath→GetRootPath 截断成 "/mnt" 挂不上。
+    #   判断真因：`on fs` 触发时，by-name/persist 这条由 ueventd **异步**建立的
+    #   符号链接很可能还没就绪 ⇒ mount(2) 返回 ENOENT。
+    #   改法：先 wait 设备节点（最多 10 s），再 mount；若 init 的 builtin 仍不成功，
+    #   由 shell 脚本兜底重试一次，并把全过程写入 /tmp/mountpersist.log 供下次判读。
+    wait /dev/block/bootdevice/by-name/persist 10
     mount ext4 /dev/block/bootdevice/by-name/persist /mnt/vendor/persist noatime,nosuid,nodev,barrier=1
+    # 兜底 + 留证：exec 是同步的（init 会 waitpid），脚本跑完才继续，
+    # 所以挂载必定早于 on boot → class_start default → recovery。
+    # 最坏情况：wait 10s 超时 + 脚本 sleep 5 次 = 约 15s 延迟，不会卡死。
+    exec -- /system/bin/sh /system/bin/mountpersist.sh
     mkdir /mnt/vendor/persist/TWRP 0775 root root
     # 启动即清 BCB，避免「重启又回 recovery」（详见上方 clearbcb service 注释）。
     start clearbcb

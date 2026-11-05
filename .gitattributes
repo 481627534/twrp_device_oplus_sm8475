@@ -1,3 +1,8 @@
-# TWRP device tree: keep shell scripts LF even on Windows checkouts.
-# A CRLF shebang ("#!/system/bin/sh\r") makes the script fail to exec on device.
+# TWRP device tree: 强制 LF，避免 Windows checkout 把行尾转成 CRLF。
+#
+# 1) 脚本：CRLF 会让 shebang 变成 "#!/system/bin/sh\r"，设备上直接 exec 失败。
+# 2) rc 文件：init 解析时会把 "\r" 当成参数的一部分（例如
+#    "barrier=1\r"），mount 选项非法、属性值带尾随 CR，且不会有显式报错。
+#    这是 2026-11-05 实测发现工作区被 autocrlf 转成 CRLF 后加的保护。
 *.sh   text eol=lf
+*.rc   text eol=lf

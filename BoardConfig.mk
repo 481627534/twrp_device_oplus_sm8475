@@ -166,6 +166,20 @@ BOARD_AVB_ENABLE := true
 # 该实现在 recovery 下不工作 ⇒ 关掉，宁可没震动，不能一直震。
 TW_SUPPORT_INPUT_AIDL_HAPTICS := false
 
+# 2026-11-05（老板要求）：进 TWRP 一律不震，不用每次手动去设置里拉三条滑杆。
+# 上游总开关 TW_NO_HAPTICS 一开，下面四件事同时发生（都不需要改 recovery 源码）：
+#   1) data.cpp 不再写入三个默认值 tw_button_vibrate=80 / tw_keyboard_vibrate=40 /
+#      tw_action_vibrate=160，且 consts_["tw_disable_haptics"] = true；
+#   2) DataManager::Vibrate() 整函数体被 #ifndef 掏空，成了空函数；
+#   3) twrpminui 的 vibrate() 与 haptics_available() 不编译，返回 0；
+#   4) twrp_hardware_settings::has_haptics() = (tw_disable_haptics == 0) ⇒ false，
+#      所有 vibrate() 调用在第一行就 return。
+# ⚠️ 这比「把三项默认值改成 0ms」更彻底：0ms 仍会走完调用链并写 sysfs，
+#    TW_NO_HAPTICS 是根本不写。代价：GUI 的「震动」设置页会消失，要恢复震动只能删掉这行重编。
+# ⚠️ 另注：v0.4 在 init.recovery.qcom.rc 里加的 `setprop tw_disable_haptics 1` 是无效的
+#    —— 那是 Android property，而 GUI 读的是 DataManager 的 const，两套系统不通。
+TW_NO_HAPTICS := true
+
 # Other TWRP Configurations
 TARGET_RECOVERY_QCOM_RTC_FIX            := true
 TW_CUSTOM_CPU_TEMP_PATH                 := "/sys/class/thermal/thermal_zone25/temp"
