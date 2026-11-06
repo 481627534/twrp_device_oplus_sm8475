@@ -73,7 +73,19 @@ TW_INCLUDE_CRYPTO               := true
 TW_INCLUDE_CRYPTO_FBE           := true
 # metadata 解密走 policy 2（本机 ro.crypto.metadata_init_delete_all_keys.enabled=true）
 TW_USE_FSCRYPT_POLICY           := 2
-# 让 TWRP 用检测到的 keymaster/keymint 版本，而不是回落到默认
+# ⚠️ 2026-11-06 读源码纠正：这个开关的语义被理解反了，别指望它「用检测到的版本」。
+# 见 bootable/recovery/partitionmanager.cpp:263 ProcessKeymasterVersion()：
+#     #ifndef TW_FORCE_KEYMASTER_VER
+#         version = KmVerFromManifest(version);            // 正常：探 manifest
+#     #else
+#         version = GetProperty(TW_KEYMASTER_VERSION_PROP); // 只读属性，跳过探测
+#         if (version.empty()) LOGINFO("...keymaster_ver prop not set");
+#     #endif
+# 没人给 tw_keymaster_version 赋值 ⇒ 版本被写成空串，正是日志里
+#   I:Keymaster_Ver::Using keymaster version '' for decryption
+# 的来源。但同平台的 AQ1601/twrp_device_oplus_sm8475（一加 Ace Pro PGO110，
+# Decryption ✅）压根没设这一行，版本同样是空 ⇒ 版本空不是 -49 的根因。
+# 保留它只是历史包袱；v0.8 若无其它变量可尝试删除（行为差异仅日志）。
 TW_FORCE_KEYMASTER_VER          := true
 
 # Debug

@@ -64,10 +64,17 @@ service mountpersist /system/bin/sh /system/bin/mountpersist.sh
 # 由 `on property:crypto.ready=1` 触发，也就是 prepdecrypt.vendor 跑完之后。
 # 理由见 system/bin/tee_launch.sh 顶部注释（persist 挂载、/dev/qseecom 权限、
 # build 版本属性三件事都在 on init 之后才就绪）。
+#
+# ⚠️ v0.8 修正（v0.7 遗留 bug）：这两条 service 之前**漏了 `disabled`**。
+#   init 对没有 `class` 的 service 默认归 default 类，而 `on boot` 末尾的
+#   `class_start default` 会把它一起拉起来 —— 也就是闸门在 crypto.ready 之前
+#   就已经跑过一遍了，属性还是 99.87.36，等于白改。加上 `disabled` 后只认
+#   `start` 显式触发（disabled 只挡 class_start，不挡 start）。
 service tee_launch /system/bin/sh /system/bin/tee_launch.sh
     user root
     group root
     oneshot
+    disabled
     seclabel u:r:recovery:s0
 
 # 兜底：万一 crypto.ready 没来，30 秒后强起，避免落进「TEE 服务全无」。
@@ -75,6 +82,7 @@ service tee_watchdog /system/bin/sh /system/bin/tee_watchdog.sh
     user root
     group root
     oneshot
+    disabled
     seclabel u:r:recovery:s0
 
 on init
