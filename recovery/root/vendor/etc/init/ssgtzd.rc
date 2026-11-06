@@ -12,17 +12,17 @@
 #   会让 init 静默不起服务——**错的**。v0.5 里 /dev/socket/ssgtzd 的属组就是 oem_2912，
 #   说明 init 解析成功、ssgtzd 正常跑起来了。第 2 点纯粹是为了和 C16 减少变量，
 #   不是修 bug。
-# 保留 donor 的 disabled + seclabel：
-#   disabled 由本文件 on early-boot 与 init.recovery.qcom.rc 的
-#   property:servicemanager.ready 显式 start；seclabel 必须落在 u:r:recovery:s0。
+#
+# PGW110 v0.7 改动：**去掉 `on early-boot / start vendor.ssgtzd`**。
+# ssgtzd 是 smcinvoke / TZD 网关，同样依赖 persist（RPMB）先就位，而 persist 在
+# `on fs` 才挂 —— early-boot 比它更早。现在由 tee_launch.sh 在 qseecomd 的
+# listeners.registered=1 之后拉起。
+# 保留 `disabled` + `seclabel`：disabled 由 setprop ctl.start 绕过；
+# seclabel 必须落在 u:r:recovery:s0。
 
 # Create the directories used by qwes
 on post-fs-data
     mkdir /data/vendor/qwes 0755 system system
-
-# Start daemon on early-init
-on early-boot
-    start vendor.ssgtzd
 
 service vendor.ssgtzd /vendor/bin/ssgtzd
     class late_start

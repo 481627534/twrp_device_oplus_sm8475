@@ -1,9 +1,22 @@
 # Copyright (c) 2021 Qualcomm Technologies, Inc.
 # All Rights Reserved.
 # Confidential and Proprietary - Qualcomm Technologies, Inc.
-
-on init
-    start vendor.keymint-qti
+#
+# PGW110 v0.7 改动：**去掉 `on init / start vendor.keymint-qti`**。
+# 这正是本轮最核心的一处时序修正。旧行为：它和 qseecomd 在同一个 `on init`
+# 阶段被拉起，零等待；那个时刻 persist 还没挂（`on fs` 才挂）、
+# ro.build.version.release 还是 TWRP 的伪装值 99.87.36。
+# 而 libqtikeymint.so 里写死了读这三个属性：
+#     ro.build.version.release
+#     ro.build.version.security_patch
+#     ro.vendor.build.security_patch
+# 拿去填 KM_TAG_OS_VERSION / KM_TAG_OS_PATCHLEVEL 交给 TA。属性是假的，
+# TA 就拒绝一切密钥操作 ⇒ keystore 恒定 -49 SECURE_HW_COMMUNICATION_FAILED
+# （报「补丁级太新」时则是 -62 KEY_REQUIRES_UPGRADE，因为 TWRP 写的是 2099-12-31）。
+# 现在由 system/bin/tee_launch.sh 在 crypto.ready 之后启动，那时属性已被
+# prepdecrypt.vendor 用 resetprop 改成真机值（16 / 2026-04-01）。
+#
+# 保留 `disabled`（挡住 class_start early_hal）和 seclabel（必须是 recovery 域）。
 
 service vendor.keymint-qti /vendor/bin/hw/android.hardware.security.keymint-service-qti
     class early_hal

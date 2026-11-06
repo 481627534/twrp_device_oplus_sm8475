@@ -60,8 +60,42 @@ service mountpersist /system/bin/sh /system/bin/mountpersist.sh
     oneshot
     seclabel u:r:recovery:s0
 
+# PGW110 v0.7: TEE 服务统一启动闸门。
+# 由 `on property:crypto.ready=1` 触发，也就是 prepdecrypt.vendor 跑完之后。
+# 理由见 system/bin/tee_launch.sh 顶部注释（persist 挂载、/dev/qseecom 权限、
+# build 版本属性三件事都在 on init 之后才就绪）。
+service tee_launch /system/bin/sh /system/bin/tee_launch.sh
+    user root
+    group root
+    oneshot
+    seclabel u:r:recovery:s0
+
+# 兜底：万一 crypto.ready 没来，30 秒后强起，避免落进「TEE 服务全无」。
+service tee_watchdog /system/bin/sh /system/bin/tee_watchdog.sh
+    user root
+    group root
+    oneshot
+    seclabel u:r:recovery:s0
+
 on init
     setprop sys.usb.configfs 1
+    #
+    # 2026-11-06（v0.7）：**打开 prepdecrypt 的 SETPATCH override —— 这是本轮核心**。
+    # prepdecrypt.sh:14-21 的门控是：
+    #     setpatch_prop=$(getprop prepdecrypt.setpatch)
+    #     为空 ⇒ SETPATCH_OVERRIDE=false ⇒ 后面 SETPATCH=false
+    # 而 SETPATCH=false 时它只走 update_default_values()，那个函数遇到
+    # 「属性已存在」就打印 "xxx exists!" 然后什么都不做。于是：
+    #     ro.build.version.release        = 99.87.36    （真机 16）
+    #     ro.build.version.security_patch = 2099-12-31  （真机 2026-04-01）
+    #     ro.vendor.build.security_patch  = 2099-12-31  （真机 2026-04-01）
+    # 而 libqtikeymint.so 里恰好就是这三个属性名 —— 它拿去填
+    # KM_TAG_OS_VERSION / KM_TAG_OS_PATCHLEVEL 交给 TA。补丁级 209912 比 TA 已知的
+    # 202604 还新，正是 -62 KEY_REQUIRES_UPGRADE 的来源；版本号解析成垃圾则是 -49。
+    # 脚本自己的注释写着："set the below prop in init.recovery on init to trigger
+    # the override function"，我们此前从没设过。
+    # 值必须字面量 "true"（脚本用 [ "$SETPATCH" = "true" ] 做字符串比较）。
+    setprop prepdecrypt.setpatch true
     # 2026-11-05：这里原来有一行 `setprop tw_disable_haptics 1`，**无效，已删**。
     #   该 property 与 GUI 读的 DataManager const `tw_disable_haptics` 是两套系统，
     #   互不相通。震动现在由 BoardConfig.mk 的 TW_NO_HAPTICS := true 从编译期关掉。
@@ -78,7 +112,10 @@ on init
     #   6+ 列格式 ⇒ 每条都报 unknown flag，/misc 匹配不到 ⇒ bootcontrol_init() CHECK
     #   失败 ⇒ abort ⇒ init 按 5 秒间隔无限重启。TWRP 不需要 IBootControl
     #   （槽位走 ro.boot.slot_suffix），删掉零代价，顺带省 CPU、不再刷屏。
-    start vendor.gatekeeper_default
+    #
+    # 2026-11-06（v0.7）：**这里原本还有 `start vendor.gatekeeper_default`，已删**。
+    #   qseecomd / ssgtzd / keymint / gatekeeper 四个 TEE 服务现在全部由
+    #   crypto.ready → tee_launch 统一拉起，原因见文件末尾那段注释。
 
 on property:ro.boot.usbcontroller=*
     setprop sys.usb.controller ${ro.boot.usbcontroller}
@@ -141,7 +178,24 @@ on property:twrp.modules.loaded=true
 
 on property:servicemanager.ready=true
     setprop sys.boot_completed 1
-    start vendor.ssgtzd
+    # v0.7: **这里原本是 `start vendor.ssgtzd`，已删**。
+    # ssgtzd 处理的是 smcinvoke / TZD 网关，它同样需要 persist（RPMB）先就位，
+    # 而 persist 在 `on fs` 才挂。现在统一由 tee_launch 按
+    # qseecomd → listeners.registered → ssgtzd → keymint → gatekeeper 的顺序拉起。
+
+# PGW110 v0.7 —— TEE 启动闸门。
+# crypto.ready 由 vendor/bin/prepdecrypt.sh 的 finish()/finish_error() 设置，
+# 它跑完就意味着：
+#   ① 真实 system / vendor 已被临时挂载读到 build.prop
+#   ② ro.build.version.release / security_patch / vendor.build.security_patch
+#      已被 resetprop 改成真机值（前提是 on init 里设了 prepdecrypt.setpatch）
+# 此时再去起 TEE 服务，libqtikeymint 读到的才是对的版本号。
+on property:crypto.ready=1
+    start tee_launch
+
+# 兜底：crypto.ready 万一不来，30 秒后强起（见 tee_watchdog.sh）。
+on boot
+    start tee_watchdog
 
 on property:twrp.variant.files_copied=1
     start prepdecrypt.vendor

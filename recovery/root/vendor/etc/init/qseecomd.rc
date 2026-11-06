@@ -1,15 +1,23 @@
 # Copyright (c) 2019 Qualcomm Technologies, Inc.
 # All Rights Reserved.
 # Confidential and Proprietary - Qualcomm Technologies, Inc.
-
-on init
-    start vendor.qseecomd
+#
+# PGW110 v0.7 改动：**去掉 `on init / start vendor.qseecomd`，加 `disabled`**。
+# 它必须在 persist 已挂载之后才启动，否则 RPMB 初始化失败，紧接着
+#   "qseecom listener services ... shall not start listener services"
+# 整组 listener 线程都不启动 ⇒ vendor.sys.listeners.registered 永远为 0
+# ⇒ keymint 拿不到可用的 TEE 会话（就是 -49 SECURE_HW_COMMUNICATION_FAILED）。
+# 另外 /dev/qseecom 的 chmod 0660 / chown system:drmrpc 也在 `on fs` 里，
+# 与 `on init` 相比同样是倒置的。
+# 现在由 system/bin/tee_launch.sh 在 crypto.ready 之后按顺序拉起。
+# `disabled` 只阻止 class_start，不影响 `setprop ctl.start`。
 
 service vendor.qseecomd /vendor/bin/qseecomd
     socket notify-topology stream 660 system drmrpc
     class core
     user root
     group root drmrpc
+    disabled
     seclabel u:r:recovery:s0
 
 on property:vendor.car.hiber=hiberExit
