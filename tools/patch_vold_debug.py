@@ -58,6 +58,7 @@ LOG(INFO) / LOG(ERROR)（libbase → liblog → logd socket），而 recovery �
 
 import sys
 import os
+import re
 
 MARK = "[volddbg]"
 
@@ -91,12 +92,12 @@ RULES = [
 """,
         """    std::string version;
     if (!readFileToString(dir + "/" + kFn_version, &version)) {
-        fprintf(stderr, "[volddbg] read version file FAILED (%s/%s)\\n", dir.c_str(),
-                kFn_version.c_str());
+        fprintf(stderr, "[volddbg] read version file FAILED (dir=%s)\\n", dir.c_str());
         return false;
     }
+    // 注意：kCurrentVersion 是 static const char*，不是 std::string，不能 .c_str()
     fprintf(stderr, "[volddbg] version read ok, got '%s' expect '%s'\\n", version.c_str(),
-            kCurrentVersion.c_str());
+            kCurrentVersion);
     if (version != kCurrentVersion) {
         LOG(ERROR) << "Version mismatch, expected " << kCurrentVersion << " got " << version;
         return false;
@@ -114,8 +115,7 @@ RULES = [
 """,
         """    std::string secdiscardable_hash;
     if (!readSecdiscardable(dir + "/" + kFn_secdiscardable, &secdiscardable_hash)) {
-        fprintf(stderr, "[volddbg] readSecdiscardable FAILED (%s/%s)\\n", dir.c_str(),
-                kFn_secdiscardable.c_str());
+        fprintf(stderr, "[volddbg] readSecdiscardable FAILED (dir=%s)\\n", dir.c_str());
         return false;
     }
     fprintf(stderr, "[volddbg] secdiscardable_hash len=%d first8=", (int)secdiscardable_hash.size());
@@ -129,8 +129,7 @@ RULES = [
     fprintf(stderr, "\\n");
     std::string encryptedMessage;
     if (!readFileToString(dir + "/" + kFn_encrypted_key, &encryptedMessage)) {
-        fprintf(stderr, "[volddbg] read encrypted_key FAILED (%s/%s)\\n", dir.c_str(),
-                kFn_encrypted_key.c_str());
+        fprintf(stderr, "[volddbg] read encrypted_key FAILED (dir=%s)\\n", dir.c_str());
         return false;
     }
     fprintf(stderr, "[volddbg] encrypted_key len=%d (expect nonce%d+body+mac%d)\\n",
@@ -309,6 +308,40 @@ def apply_rule(root, path, desc, old, new):
     return True
 
 
+def sanity_check(root, path):
+    """静态自检：抓「对 C 字符串调 .c_str()」这类只在编译期才暴露的错。
+
+    2026-11-08 run #17 就是这么挂的：KeyStorage.cpp 里 kFn_version 等常量是
+    `static const char*`，补丁却写成 `kFn_version.c_str()`，clang 报
+    "member reference base type 'const char *' is not a structure or union"，
+    白编了 1 小时（到 61% 才炸）。这里提前拦下来。
+
+    只查一件确定性很高的事：文件里声明为 `static const char*` / `const char*` 的
+    标识符，不得出现 `<name>.c_str()`。误报概率极低，漏报也就是回到原样。
+    """
+    full = os.path.join(root, path)
+    with open(full, "r", encoding="utf-8", errors="surrogateescape") as f:
+        text = f.read()
+
+    cstr_names = set(
+        re.findall(r"(?:static\s+)?const\s+char\s*\*\s*([A-Za-z_]\w*)", text)
+    )
+    bad = []
+    for name in sorted(cstr_names):
+        # 必须加左词边界：`const char* p` 这种单字母变量会撞上 user_prop.c_str() 的子串
+        pat = re.compile(r"(?<![A-Za-z0-9_])" + re.escape(name) + r"\.c_str\(\)")
+        if pat.search(text):
+            bad.append(name)
+
+    if bad:
+        raise SystemExit(
+            "[patch_vold_debug] 自检失败：%s\n"
+            "  以下标识符是 const char*，不能调 .c_str()：\n    %s\n"
+            "  编译期才会报 'is not a structure or union'，别等 1 小时后才炸。"
+            % (path, "\n    ".join(bad))
+        )
+
+
 def main():
     if len(sys.argv) < 2:
         raise SystemExit("用法: python3 patch_vold_debug.py <源码根目录>")
@@ -322,6 +355,10 @@ def main():
     for path, desc, old, new in RULES:
         if apply_rule(root, path, desc, old, new):
             changed += 1
+
+    # 打完立刻自检，宁可这里失败也不要白编一小时
+    for path in sorted({r[0] for r in RULES}):
+        sanity_check(root, path)
 
     print("[patch_vold_debug] 完成：%d/%d 处改动写入" % (changed, len(RULES)))
     if changed == 0:
