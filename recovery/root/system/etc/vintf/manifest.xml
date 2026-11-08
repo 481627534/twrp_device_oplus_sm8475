@@ -1,10 +1,62 @@
-<manifest version="8.0" type="framework">
-    <!-- 2026-11-04 PGW110：TWRP 的 Keymaster_Ver 在 vendor manifest 读不到时会回落到
-         "ramdisk manifest"，而 /vendor 挂载后 ramdisk 版会被覆盖，只有这份 /system 的
-         不会被覆盖。这里补一份 keymint 声明作为最后兜底。 -->
+<manifest version="1.0" type="device">
+    <!--
+      PGW110 / TWRP recovery 的 VINTF device manifest（v0.9）
+
+      这份内容与 /vendor/etc/vintf/manifest.xml 完全一致，是 2026-11-08 在设备上
+      逐项验证过的那一版（1179 B 的等价内容）。要点：
+
+      1. 必须 type="device"。原先 /system 这份写的是 type="framework"（version 8.0），
+         那是给 framework 侧声明 HAL 用的，HAL 放进去会被 libvintf 忽略。
+
+      2. gatekeeper 必须声明成 HIDL 1.0 —— 本机整机没有 AIDL 实现。
+         2026-11-08 实测：TWRP 的 /vendor/bin 里那个
+         android.hardware.gatekeeper-service-qti（供体 AIDL 版）一启动就
+         "Check failed: status == STATUS_OK" 直接 abort；真实系统用的是
+         android.hardware.gatekeeper@1.0-service-qti。
+
+      3. keymint 的 version 3 保留：设备上带着它跑通了
+         keystore_cli_v2 generate 与 metadata 解密，不要凭推测去掉。
+
+      4. health 声明是修「电池恒显 100%」的一环。2026-11-08 验证：
+         补上后 servicemanager 打印
+         "Found android.hardware.health.IHealth/default in recovery VINTF manifest"，
+         health 服务从崩溃循环变成 running。
+
+      注意：改这份文件后必须让 servicemanager 重新读一次（重启该进程），
+      它开机时读一次就缓存，改文件不重启等于没改。
+    -->
     <hal format="aidl">
         <name>android.hardware.security.keymint</name>
         <version>3</version>
         <fqname>IKeyMintDevice/default</fqname>
+    </hal>
+    <hal format="aidl">
+        <name>android.hardware.security.secureclock</name>
+        <fqname>ISecureClock/default</fqname>
+    </hal>
+    <hal format="aidl">
+        <name>android.hardware.security.sharedsecret</name>
+        <fqname>ISharedSecret/default</fqname>
+    </hal>
+    <hal format="aidl">
+        <name>android.hardware.security.keymint</name>
+        <fqname>IRemotelyProvisionedComponent/default</fqname>
+    </hal>
+    <hal format="hidl">
+        <name>android.hardware.gatekeeper</name>
+        <transport>hwbinder</transport>
+        <version>1.0</version>
+        <interface>
+            <name>IGatekeeper</name>
+            <instance>default</instance>
+        </interface>
+    </hal>
+    <hal format="aidl">
+        <name>android.hardware.health</name>
+        <fqname>IHealth/default</fqname>
+    </hal>
+    <hal format="aidl">
+        <name>android.system.keystore2</name>
+        <fqname>IKeystoreService/default</fqname>
     </hal>
 </manifest>

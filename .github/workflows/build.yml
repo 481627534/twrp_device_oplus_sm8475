@@ -194,6 +194,17 @@ jobs:
         python3 device/${{ github.event.inputs.DEVICE_PATH }}/tools/patch_battery_capacity.py \
           bootable/recovery/recovery_utils/battery_utils.cpp
 
+    # PGW110 v0.9：给 vold 的 DE key 解密链路加 stderr 日志。
+    # 背景：TWRP 把 libvold 静态链接进 recovery 主进程，而 vold 用 LOG(INFO)
+    # （libbase → logd socket），recovery 里没有 logd 在跑 ⇒ 这些日志全被丢掉，
+    # /tmp/recovery.log 里只剩 Decrypt.cpp 那两行 printf。DE key 失败时因此
+    # 看不到"卡在哪一步、keymaster 返回什么错误码"，只能靠猜。
+    # 本脚本插入带 [volddbg] 标记的 fprintf(stderr, ...)，覆盖完整链路。
+    # 锚点失配会 exit 1 —— 宁可编译前 1 分钟失败，也不要白编 50 分钟后刷机才发现没打上。
+    - name: Patch vold debug logging (PGW110)
+      run: |
+        python3 device/${{ github.event.inputs.DEVICE_PATH }}/tools/patch_vold_debug.py .
+
     - name: Generate build info
       run: |
         echo -e "$BUILD_INFO" >> INFO.txt

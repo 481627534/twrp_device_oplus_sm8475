@@ -6,3 +6,6 @@
 #    这是 2026-11-05 实测发现工作区被 autocrlf 转成 CRLF 后加的保护。
 *.sh   text eol=lf
 *.rc   text eol=lf
+# 3) VINTF manifest：libvintf 用 XML 解析器读，CRLF 本身不致命，但保持与脚本一致，
+#    避免 checkout 后 git diff 满屏都是行尾变化、看不清真正的声明改动。
+*.xml  text eol=lf

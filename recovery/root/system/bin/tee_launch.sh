@@ -64,15 +64,30 @@ fi
 #   "The secure world reaches back into Android through the listeners this
 #    daemon registers; without them the key service cannot use any key."
 # 也就是说 keymint 在 listeners.registered=1 之前 open HAL，拿到的会话是死的。
+#
+# ⚠️ v0.9 修正（v0.7/v0.8 遗留 bug）：这个属性在真机上是**字符串 "true"**，
+#   不是 "1"。qseecomd 往 property 里写的是布尔值字面量，读回来就是 "true"。
+#   v0.7/v0.8 一直拿它跟 "1" 比 ⇒ 永远不相等 ⇒ 白等满 20 秒。
+#   现场证据（2026-11-08 /tmp/tee_launch.log）：
+#       tee_launch: WARNING listeners.registered still 'true' after 20s
+#   而同一时刻 getprop 读到的是 true，qseecomd 也早就 10 个线程了。
+#   这里把 "1" 和 "true"（含大小写变体）都当成功，避免因为写法差异又白等。
+listeners_ok() {
+    case "$(getprop vendor.sys.listeners.registered)" in
+        1|true|TRUE|True) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
 i=0
 while [ $i -lt 20 ]; do
-    [ "$(getprop vendor.sys.listeners.registered)" = "1" ] && break
+    listeners_ok && break
     i=$((i + 1))
     sleep 1
 done
 LISTENERS=$(getprop vendor.sys.listeners.registered)
-if [ "$LISTENERS" = "1" ]; then
-    log_it "listeners.registered=1 (waited ${i}s)"
+if listeners_ok; then
+    log_it "listeners.registered=$LISTENERS (waited ${i}s)"
 else
     log_it "WARNING listeners.registered still '$LISTENERS' after ${i}s, continuing anyway"
 fi

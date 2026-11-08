@@ -85,8 +85,16 @@ TW_USE_FSCRYPT_POLICY           := 2
 #   I:Keymaster_Ver::Using keymaster version '' for decryption
 # 的来源。但同平台的 AQ1601/twrp_device_oplus_sm8475（一加 Ace Pro PGO110，
 # Decryption ✅）压根没设这一行，版本同样是空 ⇒ 版本空不是 -49 的根因。
-# 保留它只是历史包袱；v0.8 若无其它变量可尝试删除（行为差异仅日志）。
-TW_FORCE_KEYMASTER_VER          := true
+#
+# v0.9（2026-11-08）：**已摘除**。理由：
+#   ① 2026-11-08 实测 keymint 那条链已经通了（keystore_cli_v2 generate 成功、
+#      metadata 解密成功、/data 挂载），版本号是空串也不影响；
+#   ② 设 true 时 ProcessKeymasterVersion() 会**跳过** KmVerFromManifest()，
+#      等于主动放弃"从 manifest 探出真实版本"的能力。摘掉后如果探测能拿到 4，
+#      对 CE 解密（gatekeeper/keystore 那条路）反而更有利；
+#   ③ 这个开关唯一确定的效果就是把版本写成空串，没有任何正面收益。
+# 留一行注释作为回滚指引：需要恢复时取消下面那行的注释即可。
+#TW_FORCE_KEYMASTER_VER          := true
 
 # Debug
 TARGET_USES_LOGD                := true
