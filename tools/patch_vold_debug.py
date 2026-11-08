@@ -281,6 +281,13 @@ def apply_rule(root, path, desc, old, new):
     with open(full, "r", encoding="utf-8", errors="surrogateescape") as f:
         text = f.read()
 
+    # 行尾归一化（双保险）。CI 在 Linux 上，上游源码本来就是 LF；但本脚本自身
+    # 如果被 checkout 成 CRLF，三元引号里的锚点就会带 "\r\n"，跟目标文件对不上。
+    # 两处都归一化，谁也坑不到谁。
+    text = text.replace("\r\n", "\n")
+    old = old.replace("\r\n", "\n")
+    new = new.replace("\r\n", "\n")
+
     # 幂等判断必须用 new 而不是 old：本脚本有多条规则是"纯追加"（new 以 old 开头），
     # 用 old 判断的话打完补丁 old 仍是子串，会判定为"没打过"而重复插入。
     if new in text:
