@@ -111,10 +111,34 @@ setprop ctl.start vendor.keymint-qti
 sleep 1
 
 # ---- 5) gatekeeper（用户凭据 / FBE，metadata 解密不依赖它） ---------------
-log_it "starting gatekeeper"
-setprop ctl.start vendor.gatekeeper_default
+# v0.10 换成了**真实的 HIDL 1.0 服务**（服务名 gatekeeper-1-0）。
+# 旧供体那份是 AIDL 版，在本机 TA 上必崩：
+#     F android.hardware.gatekeeper-service-qti: Check failed: status == STATUS_OK
+#
+# 它是 HIDL，注册要走 hwservicemanager（不是 servicemanager）。后者在 `on init`
+# 就起来了（system/etc/init/hwservicemanager.rc），但它首次读 VINTF manifest 是
+# 懒加载的，注册被拒时会打印：
+#     E HidlServiceManagement: Service android.hardware.gatekeeper@1.0::IGatekeeper/default
+#       must be in VINTF manifest in order to register/get.
+# 所以先等它 ready 再拉服务，避免抢跑。
+i=0
+while [ $i -lt 10 ]; do
+    [ "$(getprop hwservicemanager.ready)" = "true" ] && break
+    i=$((i + 1))
+    sleep 1
+done
+log_it "hwservicemanager.ready=$(getprop hwservicemanager.ready) (waited ${i}s)"
 
-sleep 1
-log_it "done: qseecomd=$(getprop init.svc.vendor.qseecomd) ssgtzd=$(getprop init.svc.vendor.ssgtzd) keymint=$(getprop init.svc.vendor.keymint-qti) gatekeeper=$(getprop init.svc.vendor.gatekeeper_default)"
+log_it "starting gatekeeper-1-0"
+setprop ctl.start gatekeeper-1-0
+sleep 2
+
+# 注册失败时 HIDL 生成的 main 会直接退出，所以「进程还活着」= 注册成功。
+# 这条判据比看 init.svc 可靠：init.svc 在服务反复重启时也会显示 running。
+# 用 ps 而不是 pidof —— comm 只有 15 字符，这个二进制名太长会被截断。
+GK_PID=$(ps -A -o PID,NAME 2>/dev/null | grep "gatekeeper@1.0" | grep -v grep | awk '{print $1}' | head -1)
+log_it "gatekeeper pid='${GK_PID}' svc=$(getprop init.svc.gatekeeper-1-0)"
+
+log_it "done: qseecomd=$(getprop init.svc.vendor.qseecomd) ssgtzd=$(getprop init.svc.vendor.ssgtzd) keymint=$(getprop init.svc.vendor.keymint-qti) gatekeeper=$(getprop init.svc.gatekeeper-1-0) gk_pid=${GK_PID}"
 
 exit 0

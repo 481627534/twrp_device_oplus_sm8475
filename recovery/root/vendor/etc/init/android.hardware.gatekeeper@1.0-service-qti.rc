@@ -1,0 +1,38 @@
+# PGW110 / TWRP —— 真实的 HIDL gatekeeper 服务（v0.10）
+#
+# 来源：原文件/opporeno9pro+/PGW110_16.0.5.700/images/vendor.img
+#       /etc/init/android.hardware.gatekeeper@1.0-service-qti.rc
+# 原文只有四行：
+#     service gatekeeper-1-0 /vendor/bin/hw/android.hardware.gatekeeper@1.0-service-qti
+#         class early_hal
+#         user system
+#         group system
+#
+# 相对原文改了两处，都有明确理由：
+#
+# ① 补 `disabled`
+#    TWRP recovery 的 init.rc（system/etc/init/hw/init.rc）只做
+#        on boot: class_start default / class_start hal
+#    全篇没有 class_start early_hal（2026-11-08 逐行核对 ramdisk 确认）。
+#    也就是说 class early_hal 在 recovery 里永远不会被自动拉起 —— 加 disabled
+#    只是把这件事写明，真正的启动由 system/bin/tee_launch.sh 显式 ctl.start。
+#    参考: AQ1601/twrp_device_oplus_sm8475 也是同样处理（它用 on init 显式 start）。
+#
+# ② 补 `seclabel u:r:recovery:s0` 和 `group drmrpc`
+#    seclabel：TWRP 里所有 vendor 服务都跑在 recovery 域（keymint/qseecomd/ssgtzd
+#    都是），不写的话会落到 init 默认域。
+#    drmrpc：/dev/qseecom 与 /dev/smcinvoke 的权限是 0660 system:drmrpc
+#    （vendor/etc/ueventd.rc 第 157/159 行）。原文只给 group system，真机上靠
+#    SELinux 域规则放行；TWRP 里没有那套规则，进程会 DAC 打不开设备节点，
+#    表现就是 HAL 起来了却读不到 TEE。keymint 的 rc 同样是 group system drmrpc，
+#    那份已验证可用。
+#
+# ⚠️ 服务名是 gatekeeper-1-0（真实 rc 的名字），不是旧供体那份的
+#    vendor.gatekeeper_default。tee_launch.sh 里 ctl.start 的名字必须同步。
+
+service gatekeeper-1-0 /vendor/bin/hw/android.hardware.gatekeeper@1.0-service-qti
+    class early_hal
+    user system
+    group system drmrpc
+    disabled
+    seclabel u:r:recovery:s0

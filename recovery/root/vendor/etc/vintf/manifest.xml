@@ -42,9 +42,21 @@
         <name>android.hardware.security.keymint</name>
         <fqname>IRemotelyProvisionedComponent/default</fqname>
     </hal>
+    <!--
+      v0.10：gatekeeper 换成**真实的 HIDL 1.0**，并故意不写 <transport>。
+      理由（2026-11-08 定案）：
+        · 本机整机没有 AIDL 实现 —— 供体那只 android.hardware.gatekeeper-service-qti
+          一启动就 "Check failed: status == STATUS_OK" abort；官方 vendor 里只有
+          @1.0-service-qti + @1.0-impl-qti.so。
+        · 不写 <transport> 时 libhidltransport 判不出 transport，会**两条路都试**：
+          先问 hwservicemanager（服务注册成功就走这条），拿不到再 dlopen
+          passthrough（impl 库已在 vendor/lib64/hw，含 -impl/-impl-qcom/-impl-taro
+          三个命名别名，因为 TWRP 的 ro.hardware/ro.board.platform 拼出来的名字
+          跟真名 -impl-qti 对不上）。
+          写成 hwbinder 就只剩一条路，等于自断后路。
+    -->
     <hal format="hidl">
         <name>android.hardware.gatekeeper</name>
-        <transport>hwbinder</transport>
         <version>1.0</version>
         <interface>
             <name>IGatekeeper</name>
