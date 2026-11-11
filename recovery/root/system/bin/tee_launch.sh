@@ -116,11 +116,15 @@ sleep 1
 #     F android.hardware.gatekeeper-service-qti: Check failed: status == STATUS_OK
 #
 # 它是 HIDL，注册要走 hwservicemanager（不是 servicemanager）。后者在 `on init`
-# 就起来了（system/etc/init/hwservicemanager.rc），但它首次读 VINTF manifest 是
-# 懒加载的，注册被拒时会打印：
-#     E HidlServiceManagement: Service android.hardware.gatekeeper@1.0::IGatekeeper/default
-#       must be in VINTF manifest in order to register/get.
-# 所以先等它 ready 再拉服务，避免抢跑。
+# 就起来了（system/etc/init/hwservicemanager.rc）。
+#
+# ⚠️ v0.9~v0.11 的教训：只要 hwservicemanager 启动时在 VINTF 里查不到自己
+# （android.hidl.manager@1.2），它会写下 hwservicemanager.disabled=true 然后躺平，
+# 该属性被 libhidlbase 在进程内 once_flag **永久缓存**；之后所有进程都判定
+# "没有 hwservicemanager"，注册必然被拒：
+#     E HidlServiceManagement: Service ... must be in VINTF manifest in order to register/get.
+# v0.12 把 /system/etc/vintf/manifest.xml 换回官方 framework 原版（含 hidl.manager），
+# 它就不会再退休了。这里仍然等一下 ready，避免抢跑。
 i=0
 while [ $i -lt 10 ]; do
     [ "$(getprop hwservicemanager.ready)" = "true" ] && break

@@ -1,30 +1,70 @@
 <manifest version="1.0" type="device">
     <!--
-      PGW110 / TWRP recovery 的 VINTF device manifest（v0.9）
+      PGW110 / TWRP recovery 的 **device** manifest（v0.12）
 
-      这份内容与 /vendor/etc/vintf/manifest.xml 完全一致，是 2026-11-08 在设备上
-      逐项验证过的那一版（1179 B 的等价内容）。要点：
+      与 /system/etc/vintf/manifest.xml 分工（照抄一加10Pro / AcePro 的同 SoC TWRP
+      实例 TWRP-13-14-OP10Pro-Color597-V2.1.img，那份能正常解密）：
 
-      1. 必须 type="device"。原先 /system 这份写的是 type="framework"（version 8.0），
-         那是给 framework 侧声明 HAL 用的，HAL 放进去会被 libvintf 忽略。
+        /system/etc/vintf/manifest.xml   → type="framework"，官方原版 3742 B
+        /system/etc/vintf/manifest/*.xml → framework 分片（TWRP 自带 keystore2 那条）
+        /vendor/etc/vintf/manifest.xml   → type="device"，就是本文件
 
-      2. gatekeeper 必须声明成 HIDL 1.0 —— 本机整机没有 AIDL 实现。
-         2026-11-08 实测：TWRP 的 /vendor/bin 里那个
-         android.hardware.gatekeeper-service-qti（供体 AIDL 版）一启动就
-         "Check failed: status == STATUS_OK" 直接 abort；真实系统用的是
-         android.hardware.gatekeeper@1.0-service-qti。
+      ⚠️ v0.9~v0.11 一直把 /system 那份写成 type="device"（并 cp 一份到 /vendor），
+      这是整条 gatekeeper 死链的源头：
 
-      3. keymint 的 version 3 保留：设备上带着它跑通了
-         keystore_cli_v2 generate 与 metadata 解密，不要凭推测去掉。
+      1. framework manifest 因此**整份缺失** → hwservicemanager 启动时查自己
+         （android.hidl.manager@1.2）查不到，实测日志：
+           I hwservicemanager: getTransport: Cannot find entry
+             android.hidl.manager@1.2::IServiceManager/default in either framework
+             or device VINTF manifest.
+           I hwservicemanager: HIDL is not supported on this device so
+             hwservicemanager is not needed
+           W hwservicemanager: Waiting on init to shut this process down.
+         它随即写下 hwservicemanager.disabled=true 这个"退休标记"，然后躺平。
+         该属性被 libhidlbase 在进程内 once_flag **永久缓存**，于是所有进程
+         （含 recovery 主进程 pid 807）此后一律打印
+           HidlServiceManagement: Trying to get transport of ... without hwservicemanager
+         并静默走 VINTF 回退 → 拿到空 → vold Decrypt.cpp 的
+         IGatekeeper::tryGetService() 重试 300×100ms 全空 →
+         recovery.log "failed to get gatekeeper service" → PIN 永远验不过。
 
-      4. health 声明是修「电池恒显 100%」的一环。2026-11-08 验证：
-         补上后 servicemanager 打印
-         "Found android.hardware.health.IHealth/default in recovery VINTF manifest"，
-         health 服务从崩溃循环变成 running。
+      2. TWRP 自带的 /system/etc/vintf/manifest/android.system.keystore2-service.xml
+         是 type="framework" version="9.0"，和 device 类型的主文件**合并冲突**：
+           Cannot add a framework manifest to a device manifest
+         当时只能把它删掉，keystore2 的声明就跟着丢了。
 
-      注意：改这份文件后必须让 servicemanager 重新读一次（重启该进程），
-      它开机时读一次就缓存，改文件不重启等于没改。
+      3. manifest 里写成 passthrough 时 gatekeeper 服务 registerAsService 被拒
+         （"must be in VINTF manifest in order to register/get"）。
+         改成 hwbinder 后立刻注册成功，实测：
+           I HidlServiceManagement: Registered android.hardware.gatekeeper@1.0::IGatekeeper/default
+           I LegacySupport: Registration complete for android.hardware.gatekeeper@1.0::IGatekeeper/default.
+         进程稳定，不再 5 秒一崩。
+
+      设备上内存盘实测（2026-11-11，v0.11 镜像 + 本文件 + 官方 framework manifest）：
+        ✔ getFrameworkHalManifest / getDeviceHalManifest 均 Successfully processed
+        ✔ hwservicemanager.ready=true，disabled 属性始终为空
+        ✔ gatekeeper-1-0 稳定 running（同一 PID 存活 >10s，不再 restarting）
+        ✔ keystore2 / keymint / servicemanager / hwservicemanager 全部 running
+
+      条目说明：
+      · android.hidl.manager@1.2 —— framework 那份官方文件里本来就有；两处同时
+        声明实测不冲突，留着可让只看 device manifest 的查询路径也命中（多一道保险）。
+      · keymint AIDL version 3 —— 本机 vendor 是 AIDL keymint；带着它跑通了
+        keystore_cli_v2 generate 与 metadata 解密，不要凭推测去掉。
+      · health AIDL —— 修「电池恒显 100%」的一环。
+      · keystore2 AIDL —— TWRP 的 framework 分片里也有，两处同时声明实测无冲突。
+
+      改这份文件后必须让 servicemanager 重读（重启该进程），它开机读一次就缓存。
     -->
+    <hal format="hidl">
+        <name>android.hidl.manager</name>
+        <transport>hwbinder</transport>
+        <version>1.2</version>
+        <interface>
+            <name>IServiceManager</name>
+            <instance>default</instance>
+        </interface>
+    </hal>
     <hal format="aidl">
         <name>android.hardware.security.keymint</name>
         <version>3</version>
@@ -43,48 +83,25 @@
         <fqname>IRemotelyProvisionedComponent/default</fqname>
     </hal>
     <!--
-      v0.11：gatekeeper 用**真实的 HIDL 1.0 + passthrough**。
+      gatekeeper：真实的 HIDL 1.0 + **hwbinder**。
 
-      ⚠️ v0.10 在这里犯过一个错：当时以为「不写 <transport> 时 libhidltransport
-      会两条路都试」，于是省掉了 <transport>。实测（2026-11-11）证明这个理解是错的
-      —— TWRP 的 libvintf 在**解析阶段**就强制要求 HIDL HAL 必须有 <transport>：
+      本机整机没有 AIDL 实现 —— 供体那只 android.hardware.gatekeeper-service-qti
+      一启动就 "Check failed: status == STATUS_OK" abort；官方 vendor 里只有
+      android.hardware.gatekeeper@1.0-service-qti + @1.0-impl-qti.so。
 
-        E servicemanager: getRecoveryHalManifest: -22 VINTF parse error:
-          Illformed file: /system/etc/vintf/manifest.xml:
-          HIDL HAL 'android.hardware.gatekeeper' should have <transport> defined.
-        E servicemanager: NULL VINTF MANIFEST!: recovery
-
-      而且这是**整份文件**解析失败，不是跳过这一条 —— 连带把 keymint / health /
-      keystore2 的声明全部作废，后果是会连锁的：
-        keystore2 Cannot connect to Keymint → HARDWARE_TYPE_UNAVAILABLE → panic(signal 6)
-        → vold "Keystore ctor FAILED (no IKeystoreSecurityLevel)"
-        → Unable to decrypt metadata encryption → /data 解不开
-
-      正确写法照抄本机官方 vendor 的实例
-      （/vendor/etc/vintf/manifest/android.hardware.graphics.mapper-impl-qti-display.xml）：
-        <transport arch="32+64">passthrough</transport>
-      arch 是**<transport> 的属性**，不是 <hal> 的属性；写在 <hal> 上无效，
-      会继续报 "Passthrough HALs requires arch attribute"。
-
-      选 passthrough 而不是 hwbinder：TWRP 里 hwservicemanager.disabled=true，
-      日志明说 "hwservicemanager is not supported on the device"，hwbinder 注册必然失败；
-      passthrough 走进程内 dlopen，impl 库已在 vendor/lib64/hw。
-
-      实测（2026-11-11）：改完后 servicemanager 打印
-        "Successfully processed VINTF information"、
-        "Found android.hardware.health.IHealth/default in recovery VINTF manifest"、
-        "Found android.system.keystore2.IKeystoreService/default in recovery VINTF manifest"，
-      keystore2 正常注册并跑起来（Successfully registered Keystore 2.0 service），
-      keymint 重新注册也不再被拒。
+      必须 hwbinder 不能 passthrough：passthrough HAL 不允许 registerAsService，
+      服务会打 "must be in VINTF manifest in order to register/get" 然后退出；
+      hwbinder 还必须有 <fqname>，缺了同样找不到。
     -->
     <hal format="hidl">
         <name>android.hardware.gatekeeper</name>
-        <transport arch="32+64">passthrough</transport>
+        <transport>hwbinder</transport>
         <version>1.0</version>
         <interface>
             <name>IGatekeeper</name>
             <instance>default</instance>
         </interface>
+        <fqname>@1.0::IGatekeeper/default</fqname>
     </hal>
     <hal format="aidl">
         <name>android.hardware.health</name>

@@ -1,97 +1,118 @@
-<manifest version="1.0" type="device">
-    <!--
-      PGW110 / TWRP recovery 的 VINTF device manifest（v0.9）
-
-      这份内容与 /vendor/etc/vintf/manifest.xml 完全一致，是 2026-11-08 在设备上
-      逐项验证过的那一版（1179 B 的等价内容）。要点：
-
-      1. 必须 type="device"。原先 /system 这份写的是 type="framework"（version 8.0），
-         那是给 framework 侧声明 HAL 用的，HAL 放进去会被 libvintf 忽略。
-
-      2. gatekeeper 必须声明成 HIDL 1.0 —— 本机整机没有 AIDL 实现。
-         2026-11-08 实测：TWRP 的 /vendor/bin 里那个
-         android.hardware.gatekeeper-service-qti（供体 AIDL 版）一启动就
-         "Check failed: status == STATUS_OK" 直接 abort；真实系统用的是
-         android.hardware.gatekeeper@1.0-service-qti。
-
-      3. keymint 的 version 3 保留：设备上带着它跑通了
-         keystore_cli_v2 generate 与 metadata 解密，不要凭推测去掉。
-
-      4. health 声明是修「电池恒显 100%」的一环。2026-11-08 验证：
-         补上后 servicemanager 打印
-         "Found android.hardware.health.IHealth/default in recovery VINTF manifest"，
-         health 服务从崩溃循环变成 running。
-
-      注意：改这份文件后必须让 servicemanager 重新读一次（重启该进程），
-      它开机时读一次就缓存，改文件不重启等于没改。
-    -->
-    <hal format="aidl">
-        <name>android.hardware.security.keymint</name>
-        <version>3</version>
-        <fqname>IKeyMintDevice/default</fqname>
-    </hal>
-    <hal format="aidl">
-        <name>android.hardware.security.secureclock</name>
-        <fqname>ISecureClock/default</fqname>
-    </hal>
-    <hal format="aidl">
-        <name>android.hardware.security.sharedsecret</name>
-        <fqname>ISharedSecret/default</fqname>
-    </hal>
-    <hal format="aidl">
-        <name>android.hardware.security.keymint</name>
-        <fqname>IRemotelyProvisionedComponent/default</fqname>
-    </hal>
-    <!--
-      v0.11：gatekeeper 用**真实的 HIDL 1.0 + passthrough**。
-
-      ⚠️ v0.10 在这里犯过一个错：当时以为「不写 <transport> 时 libhidltransport
-      会两条路都试」，于是省掉了 <transport>。实测（2026-11-11）证明这个理解是错的
-      —— TWRP 的 libvintf 在**解析阶段**就强制要求 HIDL HAL 必须有 <transport>：
-
-        E servicemanager: getRecoveryHalManifest: -22 VINTF parse error:
-          Illformed file: /system/etc/vintf/manifest.xml:
-          HIDL HAL 'android.hardware.gatekeeper' should have <transport> defined.
-        E servicemanager: NULL VINTF MANIFEST!: recovery
-
-      而且这是**整份文件**解析失败，不是跳过这一条 —— 连带把 keymint / health /
-      keystore2 的声明全部作废，后果是会连锁的：
-        keystore2 Cannot connect to Keymint → HARDWARE_TYPE_UNAVAILABLE → panic(signal 6)
-        → vold "Keystore ctor FAILED (no IKeystoreSecurityLevel)"
-        → Unable to decrypt metadata encryption → /data 解不开
-
-      正确写法照抄本机官方 vendor 的实例
-      （/vendor/etc/vintf/manifest/android.hardware.graphics.mapper-impl-qti-display.xml）：
-        <transport arch="32+64">passthrough</transport>
-      arch 是**<transport> 的属性**，不是 <hal> 的属性；写在 <hal> 上无效，
-      会继续报 "Passthrough HALs requires arch attribute"。
-
-      选 passthrough 而不是 hwbinder：TWRP 里 hwservicemanager.disabled=true，
-      日志明说 "hwservicemanager is not supported on the device"，hwbinder 注册必然失败；
-      passthrough 走进程内 dlopen，impl 库已在 vendor/lib64/hw。
-
-      实测（2026-11-11）：改完后 servicemanager 打印
-        "Successfully processed VINTF information"、
-        "Found android.hardware.health.IHealth/default in recovery VINTF manifest"、
-        "Found android.system.keystore2.IKeystoreService/default in recovery VINTF manifest"，
-      keystore2 正常注册并跑起来（Successfully registered Keystore 2.0 service），
-      keymint 重新注册也不再被拒。
-    -->
+<!--
+    Input:
+        manifest.xml
+        framework_manifest.xml
+-->
+<manifest version="4.0" type="framework">
     <hal format="hidl">
-        <name>android.hardware.gatekeeper</name>
+        <name>android.frameworks.displayservice</name>
+        <transport>hwbinder</transport>
+        <version>1.0</version>
+        <interface>
+            <name>IDisplayService</name>
+            <instance>default</instance>
+        </interface>
+        <fqname>@1.0::IDisplayService/default</fqname>
+    </hal>
+    <hal format="hidl" max-level="5">
+        <name>android.frameworks.schedulerservice</name>
+        <transport>hwbinder</transport>
+        <version>1.0</version>
+        <interface>
+            <name>ISchedulingPolicyService</name>
+            <instance>default</instance>
+        </interface>
+        <fqname>@1.0::ISchedulingPolicyService/default</fqname>
+    </hal>
+    <hal format="hidl">
+        <name>android.frameworks.sensorservice</name>
+        <transport>hwbinder</transport>
+        <version>1.0</version>
+        <interface>
+            <name>ISensorManager</name>
+            <instance>default</instance>
+        </interface>
+        <fqname>@1.0::ISensorManager/default</fqname>
+    </hal>
+    <hal format="hidl">
+        <name>android.hidl.manager</name>
+        <transport>hwbinder</transport>
+        <version>1.2</version>
+        <interface>
+            <name>IServiceManager</name>
+            <instance>default</instance>
+        </interface>
+        <fqname>@1.2::IServiceManager/default</fqname>
+    </hal>
+    <hal format="hidl">
+        <name>android.hidl.memory</name>
         <transport arch="32+64">passthrough</transport>
         <version>1.0</version>
         <interface>
-            <name>IGatekeeper</name>
+            <name>IMapper</name>
+            <instance>ashmem</instance>
+        </interface>
+        <fqname>@1.0::IMapper/ashmem</fqname>
+    </hal>
+    <hal format="hidl">
+        <name>android.hidl.token</name>
+        <transport>hwbinder</transport>
+        <version>1.0</version>
+        <interface>
+            <name>ITokenManager</name>
             <instance>default</instance>
         </interface>
+        <fqname>@1.0::ITokenManager/default</fqname>
     </hal>
-    <hal format="aidl">
-        <name>android.hardware.health</name>
-        <fqname>IHealth/default</fqname>
+    <hal format="hidl">
+        <name>android.system.net.netd</name>
+        <transport>hwbinder</transport>
+        <version>1.1</version>
+        <interface>
+            <name>INetd</name>
+            <instance>default</instance>
+        </interface>
+        <fqname>@1.1::INetd/default</fqname>
     </hal>
-    <hal format="aidl">
-        <name>android.system.keystore2</name>
-        <fqname>IKeystoreService/default</fqname>
+    <hal format="hidl">
+        <name>android.system.wifi.keystore</name>
+        <transport>hwbinder</transport>
+        <version>1.0</version>
+        <interface>
+            <name>IKeystore</name>
+            <instance>default</instance>
+        </interface>
+        <fqname>@1.0::IKeystore/default</fqname>
     </hal>
+    <hal format="native">
+        <name>netutils-wrapper</name>
+        <version>1.0</version>
+    </hal>
+    <hal format="hidl">
+        <name>vendor.qti.hardware.radio.atcmdfwd</name>
+        <transport>hwbinder</transport>
+        <version>1.0</version>
+        <interface>
+            <name>IAtCmdFwd</name>
+            <instance>AtCmdFwdService</instance>
+        </interface>
+        <fqname>@1.0::IAtCmdFwd/AtCmdFwdService</fqname>
+    </hal>
+    <hal format="hidl">
+        <name>vendor.qti.hardware.wifi.keystore</name>
+        <transport>hwbinder</transport>
+        <version>1.0</version>
+        <interface>
+            <name>IKeystoreExt</name>
+            <instance>default</instance>
+        </interface>
+        <fqname>@1.0::IKeystoreExt/default</fqname>
+    </hal>
+    <system-sdk>
+        <version>28</version>
+        <version>29</version>
+        <version>30</version>
+        <version>31</version>
+        <version>32</version>
+    </system-sdk>
 </manifest>
