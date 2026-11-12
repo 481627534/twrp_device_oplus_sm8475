@@ -103,6 +103,32 @@
         </interface>
         <fqname>@1.0::IGatekeeper/default</fqname>
     </hal>
+
+    <!-- v0.14（2026-11-12）：HIDL keymaster@4.1 —— keystore2 的第三条路（Legacy wrapper）。
+         为什么必须有（与上面 AIDL keymint 四段不冲突，是**并行**的两条通路）：
+
+         keystore2 找钥匙的顺序写死在二进制里（strings /system/bin/keystore2）：
+             globals.rs:245  genuine KeyMint      ← AIDL，本机注册被 servicemanager 拒
+             globals.rs:259  compat service       ← 需 android.security.compat，本机没有
+             globals.rs:268  Legacy wrapper       ← HIDL keymaster，**就是这一段**
+         前两条都空，所以只有这段能让 keystore2 连上钥匙硬件。
+
+         依据：同 SoC（sm8475）一加10Pro 的 TWRP 刷进本机后输 PIN 直接解开 data，
+         它的 vendor manifest 里就是这一模一样的一段（fqname @4.1，不是 @4.0）。
+         本机官方 vendor 里 keymaster@4.0 / 4.0-strongbox / 4.1 三份服务都在。
+
+         必须 hwbinder + <fqname>：passthrough 不允许 registerAsService，
+         缺 fqname 则 hwservicemanager 判 "must be in VINTF manifest" 拒注册。 -->
+    <hal format="hidl">
+        <name>android.hardware.keymaster</name>
+        <transport>hwbinder</transport>
+        <version>4.1</version>
+        <interface>
+            <name>IKeymasterDevice</name>
+            <instance>default</instance>
+        </interface>
+        <fqname>@4.1::IKeymasterDevice/default</fqname>
+    </hal>
     <hal format="aidl">
         <name>android.hardware.health</name>
         <fqname>IHealth/default</fqname>

@@ -17,6 +17,17 @@ external_storage.casefold.enabled=1
 external_storage.sdcardfs.enabled=0
 
 # Crypto
+# v0.14（2026-11-12）：**这一行是 TWRP 解 data 的总开关**。
+# 同 SoC 一加10Pro 的 TWRP 就是靠它把 keymaster 服务拉起来的：
+#   init.recovery.qcom_decrypt.rc 里
+#     on property:vendor.sys.listeners.registered=true && property:keymaster_ver=4.1
+#         start keymaster-4-1-qti
+# 属性为空 ⇒ 那几条 start 全部不触发 ⇒ 只剩 keystore2 的 AIDL 路径 ⇒ 被
+# servicemanager 的 VINTF 白名单拒 ⇒ "Cannot connect to KeyMint" ⇒ 崩。
+# 这同时解释了 BootConfig 里 ProcessKeymasterVersion() 那句
+#   "Using keymaster version '' for decryption"。
+# 本机官方 vendor 里 keymaster@4.0 / 4.0-strongbox / 4.1 三份都在，两套并行。
+keymaster_ver=4.1
 ro.hardware.keystore_desede=true
 ro.crypto.metadata_init_delete_all_keys.enabled=true
 # PGW110: 本机原厂 fstab 是 aes-256-xts(内容) : aes-256-cts(文件名)。

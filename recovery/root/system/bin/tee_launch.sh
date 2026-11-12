@@ -17,7 +17,7 @@
 #     - 表现为 keystore 恒定 -49 SECURE_HW_COMMUNICATION_FAILED
 #
 # 本脚本由 init 在 `on property:crypto.ready=1` 时启动，即 prepdecrypt 完成之后。
-# 顺序：qseecomd → 等 listeners.registered → ssgtzd → keymint → gatekeeper
+# 顺序：qseecomd → 等 listeners.registered → ssgtzd → keymaster@4.1(HIDL) → gatekeeper
 
 LOG_TAG="twrp_tee"
 
@@ -105,10 +105,28 @@ done
 log_it "ssgtzd socket waited ${i}s"
 sleep 1
 
-# ---- 4) keymint（metadata 解密要的就是它） --------------------------------
-log_it "starting keymint"
-setprop ctl.start vendor.keymint-qti
+# ---- 4) keymaster@4.1（HIDL —— keystore2 的 Legacy wrapper 就连它） --------
+# v0.14 改动：原来是 `ctl.start vendor.keymint-qti`（AIDL），换成 HIDL keymaster。
+#
+# 为什么换（经验 059）：keystore2 找钥匙顺序
+#     globals.rs:245 genuine KeyMint（AIDL）→ :259 compat → :268 Legacy wrapper（HIDL）
+# 本机 AIDL keymint 注册时被 servicemanager 用 VINTF 白名单拒掉
+#     Could not find android.hardware.security.keymint.IKeyMintDevice/default
+#     in the VINTF manifest.  →  Failed CHECK in addService, line 46
+# compat 那条又需要 android.security.compat（本机没有），所以只剩 Legacy wrapper。
+# 同 SoC 一加10Pro 的 TWRP 正是只跑 HIDL keymaster@4.1，输 PIN 就能解开本机 data。
+#
+# AIDL keymint 那行保留在下面（注释状态），需要回滚时对调两行即可。
+log_it "starting keymaster-4-1 (HIDL)"
+setprop ctl.start vendor.keymaster-4-1
 sleep 1
+KM_PID=$(ps -A -o PID,NAME 2>/dev/null | grep "keymaster@4.1" | grep -v grep | awk '{print $1}' | head -1)
+log_it "keymaster-4-1 pid='${KM_PID}' svc=$(getprop init.svc.vendor.keymaster-4-1)"
+
+# v0.13 及以前走 AIDL keymint，注册必被 VINTF 白名单拒，留着只会多一条 CHECK 失败日志。
+# log_it "starting keymint (AIDL)"
+# setprop ctl.start vendor.keymint-qti
+# sleep 1
 
 # ---- 5) gatekeeper（用户凭据 / FBE，metadata 解密不依赖它） ---------------
 # v0.10 换成了**真实的 HIDL 1.0 服务**（服务名 gatekeeper-1-0）。
@@ -143,6 +161,6 @@ sleep 2
 GK_PID=$(ps -A -o PID,NAME 2>/dev/null | grep "gatekeeper@1.0" | grep -v grep | awk '{print $1}' | head -1)
 log_it "gatekeeper pid='${GK_PID}' svc=$(getprop init.svc.gatekeeper-1-0)"
 
-log_it "done: qseecomd=$(getprop init.svc.vendor.qseecomd) ssgtzd=$(getprop init.svc.vendor.ssgtzd) keymint=$(getprop init.svc.vendor.keymint-qti) gatekeeper=$(getprop init.svc.gatekeeper-1-0) gk_pid=${GK_PID}"
+log_it "done: qseecomd=$(getprop init.svc.vendor.qseecomd) ssgtzd=$(getprop init.svc.vendor.ssgtzd) keymaster=$(getprop init.svc.vendor.keymaster-4-1) km_pid=${KM_PID} gatekeeper=$(getprop init.svc.gatekeeper-1-0) gk_pid=${GK_PID}"
 
 exit 0

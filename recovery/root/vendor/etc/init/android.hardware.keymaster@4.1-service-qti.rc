@@ -1,0 +1,43 @@
+# PGW110 / TWRP —— HIDL keymaster@4.1 服务（v0.14）
+#
+# 为什么加这个（2026-11-12）：
+#   同 SoC（sm8475）一加10Pro 的 TWRP 刷进本机，输 PIN 直接解开 data。
+#   解包对照后发现它的加密 HAL 是 **HIDL keymaster**，不是 AIDL keymint：
+#     prop.default: keymaster_ver=4.1
+#     system/bin/android.hardware.keymaster@4.0/4.1-service-qti
+#     vendor/etc/vintf/manifest.xml 里声明 @4.1::IKeymasterDevice/default
+#   而 keystore2 找钥匙的顺序写死在 globals.rs：
+#     :245 genuine KeyMint（AIDL）→ :259 compat → :268 Legacy wrapper（HIDL）
+#   我们前两条都空（AIDL keymint 注册被 servicemanager 的 VINTF 白名单拒），
+#   所以只有把第三条打通才有解。见经验 059。
+#
+# 来源：原文件/opporeno9pro+/PGW110_16.0.5.700/images/vendor.img
+#       /etc/init/android.hardware.keymaster@4.1-service-qti.rc
+# 原文：
+#     on init
+#         start vendor.keymaster-4-1
+#     service vendor.keymaster-4-1 /vendor/bin/hw/android.hardware.keymaster@4.1-service-qti
+#         class early_hal
+#         user system
+#         group system drmrpc
+#
+# 相对原文改了两处，理由与 gatekeeper 那份完全一致（见
+# vendor/etc/init/android.hardware.gatekeeper@1.0-service-qti.rc 的注释）：
+#
+# ① 去掉 `on init / start`，改成 `disabled` + 由 tee_launch.sh 显式 ctl.start
+#    recovery 的 init.rc 全篇没有 class_start early_hal，class early_hal 不会被
+#    自动拉起；更关键的是 `on init` 阶段 persist 还没挂、/dev/qseecom 还没建、
+#    ro.build.version.* 还是 TWRP 的伪装值（99.87.36 / 2099-12-31），
+#    libqtikeymaster4 会把这些假值作为 KM_TAG_OS_VERSION/PATCHLEVEL 交给 TA
+#    ⇒ -49 SECURE_HW_COMMUNICATION_FAILED。必须等 prepdecrypt 跑完再起。
+#
+# ② seclabel 固定 recovery 域
+#    TWRP 里所有 vendor 服务（qseecomd / ssgtzd / keymint / gatekeeper）都跑在
+#    u:r:recovery:s0，不写会落到 init 默认域，打不开 /dev/qseecom。
+
+service vendor.keymaster-4-1 /vendor/bin/hw/android.hardware.keymaster@4.1-service-qti
+    class early_hal
+    user system
+    group system drmrpc
+    disabled
+    seclabel u:r:recovery:s0
