@@ -1,0 +1,84 @@
+<!--
+    PGW110 / TWRP recovery —— AIDL keymint 的 VINTF 声明（v0.13）
+    目标路径：/system/etc/vintf/manifest/android.hardware.security.keymint-service-qti.xml
+
+    ============================================================
+    为什么必须放 /system，不能放 /vendor（2026-11-12 实测定位）
+    ============================================================
+    recovery 模式下的 servicemanager 用的是
+        android::vintf::VintfObjectRecovery::getRecoveryHalManifest()
+    （`strings /system/bin/servicemanager` 里有这个符号）。
+    它只解析下面两处：
+        /system/etc/vintf/manifest.xml
+        /system/etc/vintf/manifest/*.xml
+    **完全不读 /vendor**。
+
+    而 AIDL 服务注册（AServiceManager_addService）由 servicemanager 做
+    VINTF 白名单校验，查不到就整条拒绝：
+
+        servicemanager: Caller(pid=1141,uid=1000,sid=u:r:recovery:s0)
+          Could not find android.hardware.security.keymint.IKeyMintDevice/default
+          in the VINTF manifest. No alternative instances declared in VINTF.
+
+    v0.12 的失败现场就是这样：keymint 进程活着，但四个实例全被拒
+    （`Failed CHECK in addService, line 46`），于是 keystore2 拿不到
+    IKeymintDevice → `KeystoreSecurityLevel::new_native_binder` 失败 →
+    `Keystore ctor FAILED (no IKeystoreSecurityLevel)` → panic →
+    `keystore.crash_count` 一路涨到 54、`init.svc.keystore2=restarting` →
+    metadata 的 DE key 拆不开 → `Unable to decrypt metadata encryption`。
+
+    注意 HIDL 与 AIDL 的路径是分开的，别混为一谈：
+      · HIDL HAL（gatekeeper）→ hwservicemanager → 读 /vendor/etc/vintf/manifest.xml
+      · AIDL HAL（keymint/keystore2）→ servicemanager → 读 /system/etc/vintf/manifest*
+    所以 gatekeeper 一直能注册，keymint 一直不能。
+
+    ============================================================
+    格式来源
+    ============================================================
+    ① 四段 HAL 内容逐字照抄本机官方 vendor 分片：
+         PGW110_16.0.5.700 / vendor.img /
+         etc/vintf/manifest/android.hardware.security.keymint-service-qti.xml
+       （四个实例一个都不能少，少一个 keymint 进程就少注册一个，
+         剩下的 addService 仍会失败）
+    ② 根标签与写法照抄同 SoC 参考镜像里已被实测验证的 framework 分片：
+         原文件/一加10pro twrp/  → /system/etc/vintf/manifest/
+                                   android.system.keystore2-service.xml
+       `<manifest version="1.0" type="framework">` + `<interface>/<instance>`
+       （不是 `<fqname>`；两种 libvintf 都认，这里跟参考镜像保持一致）
+    ③ `type` 必须是 framework：/system 主 manifest 是 framework，
+       混入 device 类型会触发 `Cannot add a framework manifest to a device
+       manifest`（v0.10 已踩过）。
+
+    ⚠️ 别把这份声明再加回 /vendor/etc/vintf/manifest.xml —— recovery 看不见，
+       加了也没用。那边保留 gatekeeper 的 HIDL 声明即可。
+-->
+<manifest version="1.0" type="framework">
+    <hal format="aidl">
+        <name>android.hardware.security.keymint</name>
+        <interface>
+            <name>IKeyMintDevice</name>
+            <instance>default</instance>
+        </interface>
+    </hal>
+    <hal format="aidl">
+        <name>android.hardware.security.sharedsecret</name>
+        <interface>
+            <name>ISharedSecret</name>
+            <instance>default</instance>
+        </interface>
+    </hal>
+    <hal format="aidl">
+        <name>android.hardware.security.secureclock</name>
+        <interface>
+            <name>ISecureClock</name>
+            <instance>default</instance>
+        </interface>
+    </hal>
+    <hal format="aidl">
+        <name>android.hardware.security.keymint</name>
+        <interface>
+            <name>IRemotelyProvisionedComponent</name>
+            <instance>default</instance>
+        </interface>
+    </hal>
+</manifest>
