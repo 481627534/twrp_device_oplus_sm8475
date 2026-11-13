@@ -269,6 +269,90 @@ RULES = [
         if (retry) {
 """,
     ),
+    # ===================== Keystore.cpp（v0.15）=====================
+    # 起因（2026-11-13 现场）：vold 在 18:52:4x 就问 keystore2 要安全等级，
+    # 而 keystore2 到 18:53:19 才 "Successfully registered Keystore 2.0 service"
+    # （中间的 keymint/keymaster 起来要 30~50 s）。原来 ctor 一次失败即永久失败，
+    # 于是 metadata 的 DE key 解不开 ⇒ "Unable to decrypt metadata encryption"。
+    # 这里把它改成有限次重试，把这段启动竞争吃掉。
+    (
+        "system/vold/Keystore.cpp",
+        "补 <cstdio>（重试日志要用 fprintf，recovery 里 logd 不存在，LOG() 会丢）",
+        """#include <unistd.h>
+""",
+        """#include <unistd.h>
+#include <cstdio>
+""",
+    ),
+    (
+        "system/vold/Keystore.cpp",
+        "Keystore ctor：等待并重试（keystore2 就绪晚于 vold 询问）",
+        """Keystore::Keystore() {
+    ::ndk::SpAIBinder binder(waitForService(keystore2_service_name));
+    auto keystore2Service = ks2::IKeystoreService::fromBinder(binder);
+
+    if (!keystore2Service) {
+        LOG(ERROR) << "Vold unable to connect to keystore2.";
+        return;
+    }
+
+    /*
+     * There are only two options available to vold for the SecurityLevel: TRUSTED_ENVIRONMENT (TEE)
+     * and STRONGBOX. We don't use STRONGBOX because if a TEE is present it will have Weaver, which
+     * already strengthens CE, so there's no additional benefit from using StrongBox.
+     *
+     * The picture is slightly more complicated because Keystore2 reports a SOFTWARE instance as
+     * a TEE instance when there isn't a TEE instance available, but in that case, a STRONGBOX
+     * instance won't be available either, so we'll still be doing the best we can.
+     */
+    auto rc = keystore2Service->getSecurityLevel(km::SecurityLevel::TRUSTED_ENVIRONMENT,
+                                                 &securityLevel);
+    if (logKeystore2ExceptionIfPresent(rc, "getSecurityLevel"))
+        LOG(ERROR) << "Vold unable to get security level from keystore2.";
+}
+""",
+        """Keystore::Keystore() {
+    // v0.15：给 Keystore 构造加一层兜底重试。
+    //
+    // 时间账（2026-11-13 v0.14 实测）：
+    //   vold 在 18:52:32 调本构造函数；内部 waitForService() 本身已轮询
+    //   300 × 100 ms = **30 秒**（见本文件 waitForService 实现），即 18:53:02 放弃。
+    //   而 keystore2 直到 18:53:19 才 register —— **差 17 秒**。
+    //   原实现一次失败即永久失败，DE key 于是解不开，/data 挂不上，
+    //   TWPartition::is_fbe_ 保持 false，此后每次点「解密」都在
+    //   TWPartitionManager::DecryptDevice 的 `if (data->is_fbe_)` 处静默 return -1。
+    //
+    // 主修在 ramdisk 侧：tee_launch.sh 让 keymaster 与 keymint 并行起，
+    // 把 keystore2 的就绪时间拉进这 30 秒窗口（见该脚本第 4 段注释）。
+    // 这里只加 3 轮兜底 —— waitForService 每轮自己就会等 30 秒，
+    // 3 轮 = 最长约 96 秒，既能吃掉 TEE 启动偏慢的抖动，
+    // 又不会在 TEE 彻底不通时把 recovery 卡上几分钟。
+    //
+    // SecurityLevel 只用 TRUSTED_ENVIRONMENT：有 TEE 就必有 Weaver，
+    // STRONGBOX 对 CE 没有额外收益（见上游原注释）。
+    constexpr int kMaxAttempts = 3;
+    for (int attempt = 1; attempt <= kMaxAttempts; ++attempt) {
+        ::ndk::SpAIBinder binder(waitForService(keystore2_service_name));
+        auto keystore2Service = ks2::IKeystoreService::fromBinder(binder);
+
+        if (keystore2Service) {
+            auto rc = keystore2Service->getSecurityLevel(km::SecurityLevel::TRUSTED_ENVIRONMENT,
+                                                         &securityLevel);
+            if (rc.isOk() && securityLevel) {
+                fprintf(stderr, "[volddbg] Keystore ctor OK (attempt %d)\\n", attempt);
+                return;
+            }
+            logKeystore2ExceptionIfPresent(rc, "getSecurityLevel");
+            securityLevel = nullptr;
+        }
+        fprintf(stderr, "[volddbg] Keystore ctor attempt %d/%d failed (waited 30s for keystore2)\\n",
+                attempt, kMaxAttempts);
+        if (attempt < kMaxAttempts) sleep(2);
+    }
+    LOG(ERROR) << "Vold unable to get security level from keystore2.";
+}
+""",
+    ),
 ]
 
 

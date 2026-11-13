@@ -17,7 +17,13 @@
 #     - 表现为 keystore 恒定 -49 SECURE_HW_COMMUNICATION_FAILED
 #
 # 本脚本由 init 在 `on property:crypto.ready=1` 时启动，即 prepdecrypt 完成之后。
-# 顺序：qseecomd → 等 listeners.registered → ssgtzd → keymaster@4.1(HIDL) → gatekeeper
+# 顺序：qseecomd → 等 listeners.registered → ssgtzd → keymaster@4.1(HIDL) + keymint(AIDL) → gatekeeper
+#
+# ⚠️ v0.15 教训：本脚本落在 vold 的第一次 Decrypt_Device 之后（同日实测，
+#   tee_launch 18:52:43 起、vold 18:52:4x 就在要安全等级），所以光靠这里提前
+#   拉起服务并不能保证赢过 vold。真正堵住竞争的是 vold 侧的重试——
+#   tools/patch_vold_debug.py 里给 Keystore::Keystore() 加了 12 轮等待。
+#   两者缺一不可：这里缩短就绪时间，vold 那侧兜住最坏情况。
 
 LOG_TAG="twrp_tee"
 
@@ -117,16 +123,30 @@ sleep 1
 # 同 SoC 一加10Pro 的 TWRP 正是只跑 HIDL keymaster@4.1，输 PIN 就能解开本机 data。
 #
 # AIDL keymint 那行保留在下面（注释状态），需要回滚时对调两行即可。
-log_it "starting keymaster-4-1 (HIDL)"
+#
+# ⚠️ v0.15：**keymaster 与 keymint 并行起，不再串行**。依据是 v0.14 实测的时间账：
+#   vold 在 18:52:32 调 Keystore::Keystore()，其中 waitForService() 会轮询
+#   300 × 100 ms = **30 秒**（vold16/Keystore.cpp:113），即 18:53:02 超时放弃。
+#   v0.14 是串行：keymaster 18:52:45.4 注册 → 再起 keymint（还要等）→ 靠 watchdog
+#   18:53:05 才强拉 → keystore2 18:53:19 才 register ⇒ **比 30 秒窗口晚了 17 秒**，
+#   Keystore ctor 空手而归 ⇒ metadata DE key 解不开 ⇒ /data 挂不上
+#   ⇒ is_fbe_ 保持 false ⇒ 之后点多少次「解密」都在第一道门静默 return -1。
+#   两条 ctl.start 之间没有依赖（各自连各自的 TEE 会话），串行纯属浪费。
+#   并行后 keymint 约 18:52:44 起，keystore2 约 +14 s ≈ 18:52:58，
+#   落进 30 秒窗口内，Keystore ctor 第一次尝试就能拿到 SecurityLevel。
+log_it "starting keymaster-4-1 (HIDL) + keymint (AIDL) in parallel"
 setprop ctl.start vendor.keymaster-4-1
-sleep 1
+setprop ctl.start vendor.keymint-qti
+i=0
+while [ $i -lt 10 ]; do
+    ps -A 2>/dev/null | grep -q "keymaster@4.1" \
+        && ps -A 2>/dev/null | grep -q "security.keymint-service-qti" && break
+    i=$((i + 1))
+    sleep 1
+done
 KM_PID=$(ps -A -o PID,NAME 2>/dev/null | grep "keymaster@4.1" | grep -v grep | awk '{print $1}' | head -1)
-log_it "keymaster-4-1 pid='${KM_PID}' svc=$(getprop init.svc.vendor.keymaster-4-1)"
-
-# v0.13 及以前走 AIDL keymint，注册必被 VINTF 白名单拒，留着只会多一条 CHECK 失败日志。
-# log_it "starting keymint (AIDL)"
-# setprop ctl.start vendor.keymint-qti
-# sleep 1
+KMINTPID=$(ps -A -o PID,NAME 2>/dev/null | grep "security.keymint-service-qti" | grep -v grep | awk '{print $1}' | head -1)
+log_it "keymaster-4-1 pid='${KM_PID}' svc=$(getprop init.svc.vendor.keymaster-4-1) | keymint pid='${KMINTPID}' svc=$(getprop init.svc.vendor.keymint-qti) waited ${i}s"
 
 # ---- 5) gatekeeper（用户凭据 / FBE，metadata 解密不依赖它） ---------------
 # v0.10 换成了**真实的 HIDL 1.0 服务**（服务名 gatekeeper-1-0）。
